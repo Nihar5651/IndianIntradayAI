@@ -4,9 +4,17 @@ Run with: ``streamlit run src/indian_intraday_ai/ui/dashboard.py``
 """
 
 from io import BytesIO
+from pathlib import Path
+import sys
 
 import pandas as pd
 import streamlit as st
+
+# Streamlit Cloud executes this file directly, whereas local development often
+# installs the project as a package. Make the repository's ``src`` directory
+# importable in the direct-execution case.
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from indian_intraday_ai.market_analysis.option_chain import OptionChainAnalyzer
 from indian_intraday_ai.market_analysis.trade_advisor import IntradayTradeAdvisor
