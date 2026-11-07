@@ -15,7 +15,9 @@ dependencies = [
     "python-dotenv",
     "pytest",
     "ruff",
-    "streamlit"
+    "streamlit",
+    "smartapi-python",
+    "pyotp"
 ]
 
 [tool.setuptools.packages.find]

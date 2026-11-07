@@ -18,6 +18,10 @@ if __package__ in (None, ""):
 
 from indian_intraday_ai.market_analysis.option_chain import OptionChainAnalyzer
 from indian_intraday_ai.market_analysis.trade_advisor import IntradayTradeAdvisor
+from indian_intraday_ai.broker.smartapi_market_data import (
+    SmartApiCredentials,
+    SmartApiMarketData,
+)
 
 
 REQUIRED_COLUMNS = [
@@ -27,6 +31,24 @@ REQUIRED_COLUMNS = [
     "volume",
     "last_price",
 ]
+
+SMARTAPI_SECRET_KEYS = (
+    "SMARTAPI_API_KEY",
+    "SMARTAPI_CLIENT_CODE",
+    "SMARTAPI_PIN",
+    "SMARTAPI_TOTP_SECRET",
+)
+
+
+def refresh_live_nifty_ltp() -> float:
+    """Fetch an on-demand, read-only NIFTY quote using Streamlit secrets."""
+    credentials = SmartApiCredentials.from_mapping(st.secrets)
+    market_data = SmartApiMarketData(
+        credentials,
+        nifty_symbol=str(st.secrets.get("SMARTAPI_NIFTY_SYMBOL", "NIFTY")),
+        nifty_token=str(st.secrets.get("SMARTAPI_NIFTY_TOKEN", "99926000")),
+    )
+    return market_data.nifty_ltp()
 
 
 def build_demo_chain(spot_price: float) -> pd.DataFrame:
@@ -93,7 +115,28 @@ def main() -> None:
 
     with st.sidebar:
         st.header("Analysis input")
-        spot_price = st.number_input("NIFTY spot", min_value=1.0, value=25000.0, step=50.0)
+        configured_for_live_data = all(
+            str(st.secrets.get(secret_name, "")).strip() for secret_name in SMARTAPI_SECRET_KEYS
+        )
+        if configured_for_live_data:
+            st.caption("SmartAPI: read-only NIFTY LTP")
+            if st.button("Refresh live NIFTY LTP", use_container_width=True):
+                try:
+                    with st.spinner("Fetching the latest NIFTY price..."):
+                        st.session_state["live_nifty_ltp"] = refresh_live_nifty_ltp()
+                except (RuntimeError, ValueError) as error:
+                    st.error(str(error))
+            if "live_nifty_ltp" in st.session_state:
+                st.success(f"Latest SmartAPI LTP: {st.session_state['live_nifty_ltp']:,.2f}")
+        else:
+            st.caption("Add SmartAPI secrets to enable read-only live NIFTY LTP.")
+
+        spot_price = st.number_input(
+            "NIFTY spot",
+            min_value=1.0,
+            value=float(st.session_state.get("live_nifty_ltp", 25000.0)),
+            step=50.0,
+        )
         price_signal = st.selectbox("Price-action signal", ["BUY_CALL", "BUY_PUT", "NO_TRADE"])
         regime_direction = st.selectbox("Higher-timeframe direction", ["BULLISH", "BEARISH", "SIDEWAYS", "UNKNOWN"])
         regime_name = st.selectbox(
