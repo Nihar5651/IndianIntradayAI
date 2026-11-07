@@ -1,0 +1,12 @@
+README.md
+pyproject.toml
+src/indian_intraday_ai/__init__.py
+src/indian_intraday_ai/main.py
+src/indian_intraday_ai.egg-info/PKG-INFO
+src/indian_intraday_ai.egg-info/SOURCES.txt
+src/indian_intraday_ai.egg-info/dependency_links.txt
+src/indian_intraday_ai.egg-info/requires.txt
+src/indian_intraday_ai.egg-info/top_level.txt
+src/indian_intraday_ai/config/__init__.py
+src/indian_intraday_ai/config/settings.py
+src/indian_intraday_ai/utils/logger.py

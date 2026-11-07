@@ -1,0 +1,2 @@
+session_id,symbol,option_type,quantity,entry_time,entry_price,exit_time,exit_price,stop_loss,target_price,highest_price,pnl,gross_pnl,estimated_charges,estimated_slippage,net_pnl_after_costs,status
+20261107_143555_e4e719,NIFTY_TEST,CE,1,2026-11-07T14:35:55.503117,222.48,2026-11-07T14:35:55.503117,213.05,211.35,244.73,225.0,-9.43,-9.43,47.6,0.44,-57.47,TRAILING_STOP_LOSS
