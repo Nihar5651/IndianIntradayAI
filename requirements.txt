@@ -8,3 +8,5 @@ ruff
 streamlit
 smartapi-python
 pyotp
+logzero
+websocket-client
