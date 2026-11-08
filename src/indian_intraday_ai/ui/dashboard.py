@@ -509,7 +509,10 @@ def main() -> None:
     # ------------------------------------------------------------------
     with st.sidebar:
         st.header("Connection")
-        st.success("✅ SmartAPI secrets found") if secrets_ok else st.error("❌ No SmartAPI secrets")
+        if secrets_ok:
+            st.success("✅ SmartAPI secrets found")
+        else:
+            st.error("❌ No SmartAPI secrets")
         icon = STATE_ICONS.get(dqm.state.name, "❓")
         st.metric("Status", f"{icon} {dqm.state.name}")
         if dqm.last_ltp:
