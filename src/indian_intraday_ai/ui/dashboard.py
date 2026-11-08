@@ -117,7 +117,7 @@ def _init_state() -> None:
     if "last_fetch_ts"   not in st.session_state:
         st.session_state["last_fetch_ts"]   = None
     if "expiry_days"     not in st.session_state:
-        st.session_state["expiry_days"]     = DEFAULT_EXPIRY_DAYS
+        st.session_state["expiry_days"]     = _calculate_next_expiry_days()
 
 
 # ---------------------------------------------------------------------------
