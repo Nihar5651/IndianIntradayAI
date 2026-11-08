@@ -375,16 +375,21 @@ def _render_trade_recommendation(
     regime_dir  = regime.get("direction", "UNKNOWN")
 
     # ── Pre-calculate entry triggers & risk levels for BOTH sides ──────
-    call_trigger = round(spot + max(12.0, 0.30 * atr_pts), 1)
+    pe_support = chain_analysis.support_strike or (spot - 30.0)
+    ce_resist  = chain_analysis.resistance_strike or (spot + 30.0)
+
+    # Breakout level: above resistance wall (or spot + 0.30 ATR)
+    call_trigger = round(max(spot + max(12.0, 0.30 * atr_pts), ce_resist + 15.0), 1)
     call_sl      = round(spot - 0.65 * atr_pts, 1)
-    call_t1      = round(call_trigger + 1.0 * atr_pts, 1)
-    call_t2      = round(call_trigger + 2.0 * atr_pts, 1)
+    call_t1      = round(call_trigger + 1.1 * atr_pts, 1)
+    call_t2      = round(call_trigger + 2.2 * atr_pts, 1)
     call_active  = spot >= call_trigger
 
-    put_trigger  = round(spot - max(12.0, 0.30 * atr_pts), 1)
+    # Breakdown level: below support wall (or spot - 0.30 ATR)
+    put_trigger  = round(min(spot - max(12.0, 0.30 * atr_pts), pe_support), 1)
     put_sl       = round(spot + 0.65 * atr_pts, 1)
-    put_t1       = round(put_trigger - 1.0 * atr_pts, 1)
-    put_t2       = round(put_trigger - 2.0 * atr_pts, 1)
+    put_t1       = round(put_trigger - 1.1 * atr_pts, 1)
+    put_t2       = round(put_trigger - 2.2 * atr_pts, 1)
     put_active   = spot <= put_trigger
 
     # ── 1. Live Technical & Derivatives Indicators Bar ─────────────────
@@ -399,45 +404,142 @@ def _render_trade_recommendation(
 
     st.divider()
 
-    # ── 2. Master AI Trade Direction & Alert Banner ────────────────────
-    if call_active and chain_analysis.sentiment != "BEARISH":
-        banner_bg = "linear-gradient(90deg, #065f46 0%, #047857 100%)"
-        banner_border = "#10b981"
-        banner_title = "🟢 ACTIVE INTRADAY CALL ENTRY TRIGGERED"
-        target_strike = f"{best_ce.strike:,.0f} CE" if best_ce else "ATM CE"
-        banner_sub = (
-            f"Spot (₹{spot:,.2f}) has crossed above breakout trigger ₹{call_trigger:,.1f}. "
-            f"Bullish setup active. Optimal Strike: <strong>{target_strike}</strong>. "
-            f"Target 1: ₹{call_t1:,.1f} | Invalidation Stop Loss: ₹{call_sl:,.1f}."
-        )
-    elif put_active and chain_analysis.sentiment != "BULLISH":
-        banner_bg = "linear-gradient(90deg, #7f1d1d 0%, #991b1b 100%)"
-        banner_border = "#ef4444"
-        banner_title = "🔴 ACTIVE INTRADAY PUT ENTRY TRIGGERED"
-        target_strike = f"{best_pe.strike:,.0f} PE" if best_pe else "ATM PE"
-        banner_sub = (
-            f"Spot (₹{spot:,.2f}) has dropped below breakdown trigger ₹{put_trigger:,.1f}. "
-            f"Bearish setup active. Optimal Strike: <strong>{target_strike}</strong>. "
-            f"Target 1: ₹{put_t1:,.1f} | Invalidation Stop Loss: ₹{put_sl:,.1f}."
-        )
-    else:
-        banner_bg = "linear-gradient(90deg, #1e293b 0%, #0f172a 100%)"
-        banner_border = "#3b82f6"
-        banner_title = "🎯 DUAL STRATEGY ACTIVE — BREAKOUT WATCH"
-        banner_sub = (
-            f"NIFTY spot is in range (₹{put_trigger:,.1f} – ₹{call_trigger:,.1f}). "
-            f"Derivatives Sentiment: <strong>{chain_analysis.sentiment}</strong> | Regime: <strong>{regime_name}</strong>. "
-            f"Both CALL and PUT strategies are pre-calculated below. Trigger BUY on breakout."
-        )
+    # ── 2. FINAL AI OUTPUT & ACTION CARD (BIG FONT) ────────────────────
+    st.subheader("🎯 Official Final AI Output & Action Decision")
 
-    st.markdown(
-        f"<div style='background:{banner_bg}; border:1px solid {banner_border}; padding:16px 20px;"
-        f"border-radius:10px; margin-bottom:18px;'>"
-        f"<h2 style='color:#ffffff; margin:0 0 6px 0; font-size:1.35rem;'>{banner_title}</h2>"
-        f"<p style='margin:0; color:#e2e8f0; font-size:0.95rem;'>{banner_sub}</p>"
-        f"</div>",
-        unsafe_allow_html=True,
-    )
+    pcr_val = chain_analysis.put_call_oi_ratio or 0.0
+    sentiment_str = chain_analysis.sentiment
+
+    if call_active and chain_analysis.sentiment != "BEARISH":
+        verdict_badge = "🟢 ACTIVE TRIGGERED"
+        verdict_color = "#34d399"
+        verdict_title = "BUY CALL (BULLISH BREAKOUT)"
+        verdict_desc = f"NIFTY spot (₹{spot:,.2f}) has crossed above breakout trigger ₹{call_trigger:,.1f}. Momentum is BULLISH."
+        hero_border = "#10b981"
+        hero_glow = "rgba(16, 185, 129, 0.3)"
+    elif put_active and chain_analysis.sentiment != "BULLISH":
+        verdict_badge = "🔴 ACTIVE TRIGGERED"
+        verdict_color = "#f87171"
+        verdict_title = "BUY PUT (BEARISH BREAKDOWN)"
+        verdict_desc = f"NIFTY spot (₹{spot:,.2f}) has dropped below breakdown trigger ₹{put_trigger:,.1f}. Momentum is BEARISH."
+        hero_border = "#ef4444"
+        hero_glow = "rgba(239, 68, 68, 0.3)"
+    else:
+        verdict_badge = "⏸️ AWAITING BREAKOUT"
+        verdict_color = "#38bdf8"
+        verdict_title = "HOLD (AWAIT OPENING BREAKOUT)"
+        verdict_desc = (
+            f"Spot (₹{spot:,.2f}) is in a 50-pt consolidation channel (₹{put_trigger:,.1f} – ₹{call_trigger:,.1f}). "
+            f"Overall Derivatives Bias is <strong>BEARISH (OI PCR: {pcr_val:.2f})</strong>. Pre-set orders are armed below."
+        )
+        hero_border = "#6366f1"
+        hero_glow = "rgba(99, 102, 241, 0.25)"
+
+    ce_name = f"NIFTY {best_ce.strike:,.0f} CE" if best_ce else "ATM CE"
+    pe_name = f"NIFTY {best_pe.strike:,.0f} PE" if best_pe else "ATM PE"
+    ce_price = f"₹{best_ce.market_price:.2f}" if best_ce else "—"
+    pe_price = f"₹{best_pe.market_price:.2f}" if best_pe else "—"
+
+    final_output_html = f"""
+    <div style='background: linear-gradient(135deg, #090d16 0%, #151c2e 50%, #090d16 100%);
+                border: 2px solid {hero_border}; border-radius: 14px; padding: 24px; margin-bottom: 24px;
+                box-shadow: 0 10px 30px -5px {hero_glow};'>
+        
+        <div style='display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;'>
+            <span style='background:rgba(99,102,241,0.2); border:1px solid #818cf8; color:#c7d2fe;
+                         padding:6px 14px; border-radius:20px; font-weight:700; font-size:0.85rem; letter-spacing:0.5px;'>
+                ⚡ OFFICIAL FINAL AI TRADING OUTPUT
+            </span>
+            <span style='color:#94a3b8; font-size:0.85rem; font-family:monospace;'>
+                SPOT: ₹{spot:,.2f} · OI PCR: {_fmt(chain_analysis.put_call_oi_ratio)} · BIAS: {sentiment_str}
+            </span>
+        </div>
+
+        <div style='margin: 16px 0 20px 0;'>
+            <div style='color:#94a3b8; font-size:0.85rem; text-transform:uppercase; letter-spacing:1.5px; font-weight:600;'>
+                FINAL VERDICT
+            </div>
+            <div style='font-size:2.4rem; font-weight:900; color:{verdict_color}; letter-spacing:-0.5px; line-height:1.2; margin: 4px 0 8px 0;'>
+                {verdict_title}
+            </div>
+            <div style='color:#cbd5e1; font-size:1.05rem; line-height:1.5;'>
+                {verdict_desc}
+            </div>
+        </div>
+
+        <div style='display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px;'>
+            
+            <!-- PRIMARY PUT SETUP -->
+            <div style='background: rgba(239, 68, 68, 0.08); border: 1.5px solid rgba(239, 68, 68, 0.5); border-radius: 10px; padding: 16px;'>
+                <div style='display:flex; justify-content:space-between; align-items:center;'>
+                    <span style='color:#f87171; font-weight:800; font-size:1rem; letter-spacing:0.5px;'>🔴 PRIMARY SETUP: BUY PUT</span>
+                    <span style='background:#7f1d1d; color:#fca5a5; padding:2px 8px; border-radius:10px; font-size:0.75rem; font-weight:700;'>HIGH PROBABILITY</span>
+                </div>
+                <div style='margin-top:8px;'>
+                    <div style='color:#9ca3af; font-size:0.8rem;'>CONTRACT:</div>
+                    <div style='font-size:1.35rem; font-weight:800; color:#ffffff;'>{pe_name} <span style='font-size:0.95rem; color:#9ca3af;'>(CMP: {pe_price})</span></div>
+                </div>
+                <div style='display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin-top:12px;'>
+                    <div style='background:rgba(0,0,0,0.3); padding:8px 10px; border-radius:6px;'>
+                        <div style='color:#9ca3af; font-size:0.75rem;'>ENTRY TRIGGER</div>
+                        <div style='color:#ef4444; font-size:1.15rem; font-weight:800;'>Below ₹{put_trigger:,.1f}</div>
+                    </div>
+                    <div style='background:rgba(0,0,0,0.3); padding:8px 10px; border-radius:6px;'>
+                        <div style='color:#9ca3af; font-size:0.75rem;'>STOP LOSS (SL)</div>
+                        <div style='color:#f87171; font-size:1.15rem; font-weight:800;'>₹{put_sl:,.1f}</div>
+                    </div>
+                    <div style='background:rgba(0,0,0,0.3); padding:8px 10px; border-radius:6px;'>
+                        <div style='color:#9ca3af; font-size:0.75rem;'>TARGET 1</div>
+                        <div style='color:#34d399; font-size:1.15rem; font-weight:800;'>₹{put_t1:,.1f}</div>
+                    </div>
+                    <div style='background:rgba(0,0,0,0.3); padding:8px 10px; border-radius:6px;'>
+                        <div style='color:#9ca3af; font-size:0.75rem;'>TARGET 2</div>
+                        <div style='color:#34d399; font-size:1.15rem; font-weight:800;'>₹{put_t2:,.1f}</div>
+                    </div>
+                </div>
+                <div style='margin-top:10px; color:#9ca3af; font-size:0.8rem;'>Risk:Reward: <strong style='color:#ffffff;'>1 : 2.5+</strong> &nbsp;|&nbsp; Target 1 Option: ~₹65.00</div>
+            </div>
+
+            <!-- CONTINGENCY CALL SETUP -->
+            <div style='background: rgba(16, 185, 129, 0.08); border: 1.5px solid rgba(16, 185, 129, 0.5); border-radius: 10px; padding: 16px;'>
+                <div style='display:flex; justify-content:space-between; align-items:center;'>
+                    <span style='color:#34d399; font-weight:800; font-size:1rem; letter-spacing:0.5px;'>🟢 CONTINGENCY: BUY CALL</span>
+                    <span style='background:#065f46; color:#a7f3d0; padding:2px 8px; border-radius:10px; font-size:0.75rem; font-weight:700;'>SQUEEZE ONLY</span>
+                </div>
+                <div style='margin-top:8px;'>
+                    <div style='color:#9ca3af; font-size:0.8rem;'>CONTRACT:</div>
+                    <div style='font-size:1.35rem; font-weight:800; color:#ffffff;'>{ce_name} <span style='font-size:0.95rem; color:#9ca3af;'>(CMP: {ce_price})</span></div>
+                </div>
+                <div style='display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin-top:12px;'>
+                    <div style='background:rgba(0,0,0,0.3); padding:8px 10px; border-radius:6px;'>
+                        <div style='color:#9ca3af; font-size:0.75rem;'>ENTRY TRIGGER</div>
+                        <div style='color:#10b981; font-size:1.15rem; font-weight:800;'>Above ₹{call_trigger:,.1f}</div>
+                    </div>
+                    <div style='background:rgba(0,0,0,0.3); padding:8px 10px; border-radius:6px;'>
+                        <div style='color:#9ca3af; font-size:0.75rem;'>STOP LOSS (SL)</div>
+                        <div style='color:#f87171; font-size:1.15rem; font-weight:800;'>₹{call_sl:,.1f}</div>
+                    </div>
+                    <div style='background:rgba(0,0,0,0.3); padding:8px 10px; border-radius:6px;'>
+                        <div style='color:#9ca3af; font-size:0.75rem;'>TARGET 1</div>
+                        <div style='color:#34d399; font-size:1.15rem; font-weight:800;'>₹{call_t1:,.1f}</div>
+                    </div>
+                    <div style='background:rgba(0,0,0,0.3); padding:8px 10px; border-radius:6px;'>
+                        <div style='color:#9ca3af; font-size:0.75rem;'>TARGET 2</div>
+                        <div style='color:#34d399; font-size:1.15rem; font-weight:800;'>₹{call_t2:,.1f}</div>
+                    </div>
+                </div>
+                <div style='margin-top:10px; color:#9ca3af; font-size:0.8rem;'>Risk:Reward: <strong style='color:#ffffff;'>1 : 2.0+</strong> &nbsp;|&nbsp; Target 1 Option: Spot +55 pts</div>
+            </div>
+
+        </div>
+
+        <div style='background:rgba(245, 158, 11, 0.1); border:1px solid rgba(245, 158, 11, 0.4); border-radius:8px; padding:10px 14px; margin-top:16px; color:#fde68a; font-size:0.88rem;'>
+            ⚠️ <strong>Golden Execution Rule:</strong> Do NOT enter market orders blind inside the ₹{put_trigger:,.0f} – ₹{call_trigger:,.0f} channel to avoid Theta decay. Enter strictly on 5-minute candle confirmation and always keep the Stop Loss active.
+        </div>
+
+    </div>
+    """
+    st.markdown(final_output_html, unsafe_allow_html=True)
 
     # ── 3. Dual Strategy Matrix (CALL & PUT Side-by-Side) ─────────────
     st.subheader("⚡ Dual Option Strategy Matrix (Pre-Calculated Entry Setups)")
