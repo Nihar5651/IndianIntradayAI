@@ -390,6 +390,7 @@ def _render_trade_recommendation(
     spot: float,
     atr_pts: float,
     tech_indicators: dict[str, Any],
+    history: list[float] | None = None,
 ) -> None:
     regime_name = regime.get("regime", "UNCERTAIN")
     regime_dir  = regime.get("direction", "UNKNOWN")
@@ -454,6 +455,7 @@ def _render_trade_recommendation(
 
     # Evaluate 5-Layer Confluence Model
     builder: CandleBuilder = st.session_state["candle_builder"]
+    hist: list[float] = history if history is not None else st.session_state.get("ltp_history", [])
     c1  = builder.get_completed_candles("NIFTY", "1m")
     c5  = builder.get_completed_candles("NIFTY", "5m")
     c15 = builder.get_completed_candles("NIFTY", "15m")
@@ -467,15 +469,15 @@ def _render_trade_recommendation(
             spot_price=spot,
             option_chain_data=chain_analysis,
         )
-    elif len(history) >= 5:
-        dates = pd.date_range(end=datetime.now(), periods=len(history), freq="1min")
+    elif len(hist) >= 5:
+        dates = pd.date_range(end=datetime.now(), periods=len(hist), freq="1min")
         synth_df = pd.DataFrame({
             "timestamp": dates,
-            "open": history,
-            "high": [p + 2.0 for p in history],
-            "low": [p - 2.0 for p in history],
-            "close": history,
-            "volume": [1000] * len(history)
+            "open": hist,
+            "high": [p + 2.0 for p in hist],
+            "low": [p - 2.0 for p in hist],
+            "close": hist,
+            "volume": [1000] * len(hist)
         })
         decision = conf_engine.evaluate(
             five_minute_candles=synth_df,
@@ -977,6 +979,7 @@ def render_live_dashboard() -> None:
             spot=spot,
             atr_pts=atr_pts,
             tech_indicators=tech_indicators,
+            history=history,
         )
 
     except Exception as exc:
