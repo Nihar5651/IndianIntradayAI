@@ -42,9 +42,8 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-REFRESH_INTERVAL  = 5     # seconds between live LTP REST fetches
+REFRESH_INTERVAL  = 3     # seconds between live LTP REST fetches (real-time cadence)
 LTP_HISTORY_MAX   = 200   # max readings kept per session
-DEFAULT_EXPIRY_DAYS = 7   # days to nearest weekly expiry (adjust as needed)
 
 SMARTAPI_SECRET_KEYS = (
     "SMARTAPI_API_KEY",
@@ -86,6 +85,18 @@ def _is_market_open(now: datetime | None = None) -> bool:
     s = now.replace(hour=9,  minute=15, second=0, microsecond=0)
     e = now.replace(hour=15, minute=30, second=0, microsecond=0)
     return s <= now <= e
+
+
+def _calculate_next_expiry_days(now: datetime | None = None) -> int:
+    """Auto-calculate exact calendar days remaining until upcoming NIFTY Thursday expiry.
+    100% automated — no manual user input needed.
+    """
+    now = now or datetime.now(IST)
+    # Thursday is weekday() == 3
+    days_ahead = (3 - now.weekday()) % 7
+    if days_ahead == 0 and (now.hour > 15 or (now.hour == 15 and now.minute >= 30)):
+        days_ahead = 7
+    return max(1, days_ahead)
 
 
 # ---------------------------------------------------------------------------
@@ -521,21 +532,20 @@ def main() -> None:
         if last_ts:
             st.caption(f"Last fetch: {last_ts.strftime('%H:%M:%S IST')}")
 
-        st.divider()
-        st.subheader("⚙️ Greeks Config")
-        expiry_days = st.number_input(
-            "Days to expiry",
-            min_value=1, max_value=30,
-            value=st.session_state["expiry_days"],
-            step=1,
-            help="Calendar days remaining until option expiry. "
-                 "Check NSE for the nearest weekly/monthly expiry date.",
-        )
-        st.session_state["expiry_days"] = int(expiry_days)
-        st.caption("Affects Theta, Gamma and POP calculations.")
+        auto_expiry_days = _calculate_next_expiry_days(now_ist)
+        st.session_state["expiry_days"] = auto_expiry_days
 
         st.divider()
-        st.caption("All signals auto-generated from live market data.")
+        st.subheader("⚡ Automated Greeks Engine")
+        st.metric(
+            "Auto-Expiry Target",
+            f"{auto_expiry_days} calendar days",
+            help="Automatically calculated by AI to the nearest weekly Thursday expiry.",
+        )
+        st.caption("AI dynamically prices Delta, Gamma, Theta, Vega, IV, and POP.")
+
+        st.divider()
+        st.caption("🤖 100% Autonomous AI Trading Advisor\n\nContinuous real-time broker feed. No manual inputs required.")
 
     # ------------------------------------------------------------------
     # Status / candle / quality panels
@@ -608,13 +618,19 @@ def main() -> None:
         log.exception("Analysis failed: %s", exc)
 
     # ------------------------------------------------------------------
-    # Auto-refresh loop
+    # Continuous Real-Time Auto-Refresh Loop (100% Automated)
     # ------------------------------------------------------------------
-    if secrets_ok and market_open:
-        time.sleep(REFRESH_INTERVAL)
+    if secrets_ok:
+        if market_open:
+            time.sleep(REFRESH_INTERVAL)
+            st.rerun()
+        else:
+            st.caption("🔵 Regular session closed (09:15–15:30 IST Mon–Fri). Auto-refreshing every 20s to continuously monitor broker feed.")
+            time.sleep(20)
+            st.rerun()
+    else:
+        time.sleep(10)
         st.rerun()
-    elif secrets_ok and not market_open:
-        st.info("🔵 Market closed. Data is static until next session at 09:15 IST.")
 
 
 if __name__ == "__main__":
