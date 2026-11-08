@@ -430,20 +430,40 @@ def _render_trade_recommendation(
             if not filtered:
                 filtered = all_greeks
 
-            rows = [g.to_dict() for g in filtered]
-            df   = pd.DataFrame(rows).rename(columns={
-                "strike": "Strike", "type": "Type", "expiry_days": "Days",
-                "market_price": "Premium(₹)", "model_price": "Model(₹)",
-                "delta": "Delta(Δ)", "gamma": "Gamma(Γ)", "theta": "Theta(Θ)/day",
-                "vega": "Vega(ν)/1%", "iv_pct": "IV%", "pop_pct": "POP%", "moneyness": "Moneyness",
-            })
-            # Highlight recommended strike
-            if best_strike:
-                def _highlight(row):
-                    return ["background-color: #1a3d1a" if row["Strike"] == best_strike.strike else "" for _ in row]
-                st.dataframe(df.style.apply(_highlight, axis=1), use_container_width=True, height=400)
-            else:
-                st.dataframe(df, use_container_width=True, height=400)
+            table_rows = []
+            for g in filtered:
+                is_best = best_strike and g.strike == best_strike.strike
+                bg = "background-color: #1a4d1a; font-weight: bold;" if is_best else ""
+                table_rows.append(
+                    f"<tr style='{bg} border-bottom: 1px solid #222;'>"
+                    f"<td style='padding:6px 10px;'>{g.strike:,.0f}</td>"
+                    f"<td style='padding:6px 10px;'>{g.option_type}</td>"
+                    f"<td style='padding:6px 10px;'>₹{g.market_price:.2f}</td>"
+                    f"<td style='padding:6px 10px;'>{g.delta:+.3f}</td>"
+                    f"<td style='padding:6px 10px;'>{g.gamma:.5f}</td>"
+                    f"<td style='padding:6px 10px; color: #ef4444;'>₹{g.theta:.2f}</td>"
+                    f"<td style='padding:6px 10px;'>₹{g.vega:.2f}</td>"
+                    f"<td style='padding:6px 10px;'>{g.iv_pct:.1f}%</td>"
+                    f"<td style='padding:6px 10px; color: #10b981;'>{g.pop:.0f}%</td>"
+                    f"<td style='padding:6px 10px;'>{g.moneyness}</td>"
+                    f"</tr>"
+                )
+            table_html = f"""
+            <div style='max-height: 420px; overflow-y: auto; border: 1px solid rgba(255,255,255,0.1); border-radius: 8px;'>
+            <table style='width: 100%; border-collapse: collapse; font-family: monospace; font-size: 0.85rem; text-align: right; background: #111827;'>
+                <thead style='background: #1f2937; position: sticky; top: 0; z-index: 1;'>
+                    <tr>
+                        <th style='padding:8px 10px;'>Strike</th><th>Type</th><th>Premium</th><th>Delta</th>
+                        <th>Gamma</th><th>Theta/d</th><th>Vega/1%</th><th>IV</th><th>POP</th><th>Moneyness</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {''.join(table_rows)}
+                </tbody>
+            </table>
+            </div>
+            """
+            st.markdown(table_html, unsafe_allow_html=True)
 
     # ── Option-chain positioning ─────────────────────────────────────────
     st.subheader("📊 Option-Chain Structure")
@@ -577,6 +597,29 @@ def main() -> None:
         page_icon="📈",
         layout="wide",
     )
+    # Trading Terminal Styling
+    st.markdown("""
+    <style>
+        .stApp {
+            background-color: #0b0f19;
+            color: #f3f4f6;
+        }
+        div[data-testid="stMetricValue"] {
+            font-family: 'JetBrains Mono', 'Courier New', monospace;
+            font-weight: 700;
+        }
+        div[data-testid="stMetric"] {
+            background: rgba(17, 24, 39, 0.7);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 8px;
+            padding: 12px;
+            transition: all 0.3s ease;
+        }
+        div[data-testid="stMetric"]:hover {
+            border-color: rgba(59, 130, 246, 0.4);
+        }
+    </style>
+    """, unsafe_allow_html=True)
     _init_state()
 
     # Static page header

@@ -1,0 +1,110 @@
+<div class="terminal-container">
+  <!-- Top Bar -->
+  <header class="terminal-header">
+    <div class="brand">
+      <span class="icon">📈</span>
+      <h1>IndianIntradayAI <span class="tag">ANGULAR TERMINAL</span></h1>
+    </div>
+    <div class="live-pill" [ngClass]="quality?.state?.toLowerCase()">
+      <span class="pulse-dot"></span>
+      {{ quality?.state }}
+    </div>
+  </header>
+
+  <!-- Main Grid -->
+  <main class="terminal-grid">
+    <!-- Row 1: Market Status Card -->
+    <section class="card market-status-card">
+      <div class="card-header">
+        <h2>📡 NIFTY 50 REAL-TIME SPOT</h2>
+        <span class="time mono">{{ tick?.timestamp }} IST</span>
+      </div>
+      <div class="ltp-display" [ngClass]="{'flash-up': priceDirection === 'up', 'flash-down': priceDirection === 'down'}">
+        <span class="currency">₹</span>
+        <span class="value mono">{{ tick?.ltp | number:'1.2-2' }}</span>
+        <span class="delta-arrow" *ngIf="priceDirection === 'up'">▲</span>
+        <span class="delta-arrow down" *ngIf="priceDirection === 'down'">▼</span>
+      </div>
+      <div class="status-metrics">
+        <div class="metric">
+          <label>Source</label>
+          <span class="val">{{ tick?.source }}</span>
+        </div>
+        <div class="metric">
+          <label>1m Candles</label>
+          <span class="val mono">{{ candles?.m1 }}</span>
+        </div>
+        <div class="metric">
+          <label>5m Candles</label>
+          <span class="val mono">{{ candles?.m5 }}</span>
+        </div>
+        <div class="metric">
+          <label>15m Candles</label>
+          <span class="val mono">{{ candles?.m15 }}</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Row 2: AI Trade Signal Recommendation -->
+    <section class="card signal-card" [ngClass]="advice?.action?.toLowerCase()">
+      <div class="card-header">
+        <h2>🤖 AI TRADE RECOMMENDATION</h2>
+        <span class="badge">CONFIDENCE: {{ advice?.confidence }}%</span>
+      </div>
+      <div class="signal-banner">
+        <div class="action-callout">
+          <span class="icon">{{ advice?.action === 'BUY_CALL' ? '🟢' : '🔴' }}</span>
+          <span class="action-name">{{ advice?.action }}</span>
+        </div>
+        <div class="levels-group">
+          <div class="level">
+            <label>Entry Trigger</label>
+            <span class="val mono">₹{{ advice?.entryTrigger | number:'1.2-2' }}</span>
+          </div>
+          <div class="level">
+            <label>Stop Loss (SL)</label>
+            <span class="val mono danger">₹{{ advice?.invalidationLevel | number:'1.2-2' }}</span>
+          </div>
+          <div class="level">
+            <label>Target (TP)</label>
+            <span class="val mono success">₹{{ advice?.firstObjective | number:'1.2-2' }}</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Row 3: Optimal Option Greeks Profile -->
+    <section class="card greeks-card" *ngIf="advice?.recommendedContract">
+      <div class="card-header">
+        <h2>⚡ RECOMMENDED OPTION CONTRACT & GREEKS</h2>
+        <span class="contract-badge">{{ advice?.recommendedContract?.strike }} {{ advice?.recommendedContract?.type }} ({{ advice?.recommendedContract?.moneyness }})</span>
+      </div>
+      <div class="greeks-grid">
+        <div class="greek-item">
+          <label>Delta (Δ)</label>
+          <span class="mono">{{ advice?.recommendedContract?.delta }}</span>
+        </div>
+        <div class="greek-item">
+          <label>Gamma (Γ)</label>
+          <span class="mono">{{ advice?.recommendedContract?.gamma }}</span>
+        </div>
+        <div class="greek-item">
+          <label>Theta (Θ) /day</label>
+          <span class="mono danger">₹{{ advice?.recommendedContract?.theta }}</span>
+        </div>
+        <div class="greek-item">
+          <label>Vega (ν) /1%</label>
+          <span class="mono">₹{{ advice?.recommendedContract?.vega }}</span>
+        </div>
+        <div class="greek-item">
+          <label>IV</label>
+          <span class="mono">{{ advice?.recommendedContract?.ivPct }}%</span>
+        </div>
+        <div class="greek-item">
+          <label>POP</label>
+          <span class="mono success">{{ advice?.recommendedContract?.popPct }}%</span>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>

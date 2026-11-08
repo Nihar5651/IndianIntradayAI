@@ -1,0 +1,198 @@
+.terminal-container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.terminal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--border-color);
+  margin-bottom: 24px;
+
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    h1 {
+      font-size: 1.4rem;
+      font-weight: 700;
+      .tag {
+        font-size: 0.7rem;
+        background: #1f2937;
+        padding: 2px 8px;
+        border-radius: 4px;
+        color: var(--accent-blue);
+      }
+    }
+  }
+
+  .live-pill {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 14px;
+    border-radius: 9999px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    background: rgba(59, 130, 246, 0.1);
+    color: var(--accent-blue);
+
+    &.live {
+      background: rgba(16, 185, 129, 0.1);
+      color: var(--accent-green);
+      .pulse-dot { background: var(--accent-green); }
+    }
+
+    .pulse-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--accent-blue);
+    }
+  }
+}
+
+.terminal-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 20px;
+
+  .card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+    h2 {
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: var(--text-secondary);
+      letter-spacing: 0.05em;
+    }
+  }
+}
+
+.market-status-card {
+  .ltp-display {
+    font-size: 2.8rem;
+    font-weight: 700;
+    margin-bottom: 20px;
+    padding: 8px 12px;
+    border-radius: 8px;
+    transition: background-color 0.3s ease;
+    display: inline-flex;
+    align-items: baseline;
+    gap: 8px;
+
+    .delta-arrow {
+      font-size: 1.5rem;
+      color: var(--accent-green);
+      &.down { color: var(--accent-red); }
+    }
+  }
+
+  .status-metrics {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 16px;
+
+    .metric {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      label {
+        font-size: 0.75rem;
+        color: var(--text-secondary);
+      }
+      .val {
+        font-size: 1.1rem;
+        font-weight: 600;
+      }
+    }
+  }
+}
+
+.signal-card {
+  border-left: 4px solid var(--accent-blue);
+
+  &.buy_call {
+    border-left-color: var(--accent-green);
+    background: linear-gradient(135deg, rgba(16, 185, 129, 0.05) 0%, rgba(17, 24, 39, 0.7) 100%);
+  }
+  &.buy_put {
+    border-left-color: var(--accent-red);
+    background: linear-gradient(135deg, rgba(239, 68, 68, 0.05) 0%, rgba(17, 24, 39, 0.7) 100%);
+  }
+
+  .signal-banner {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 20px;
+
+    .action-callout {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      .action-name {
+        font-size: 1.8rem;
+        font-weight: 700;
+      }
+    }
+
+    .levels-group {
+      display: flex;
+      gap: 24px;
+      .level {
+        display: flex;
+        flex-direction: column;
+        label { font-size: 0.75rem; color: var(--text-secondary); }
+        .val { font-size: 1.2rem; font-weight: 700; }
+        .danger { color: var(--accent-red); }
+        .success { color: var(--accent-green); }
+      }
+    }
+  }
+}
+
+.greeks-card {
+  .contract-badge {
+    background: rgba(59, 130, 246, 0.15);
+    color: var(--accent-blue);
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-weight: 600;
+    font-size: 0.85rem;
+  }
+
+  .greeks-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: 16px;
+
+    .greek-item {
+      background: rgba(255, 255, 255, 0.02);
+      padding: 12px;
+      border-radius: 8px;
+      border: 1px solid var(--border-color);
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+
+      label { font-size: 0.75rem; color: var(--text-secondary); }
+      span { font-size: 1.15rem; font-weight: 600; }
+      .danger { color: var(--accent-red); }
+      .success { color: var(--accent-green); }
+    }
+  }
+}
