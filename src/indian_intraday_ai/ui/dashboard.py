@@ -25,9 +25,17 @@ import streamlit as st
 
 # ---------------------------------------------------------------------------
 # Path fix: Streamlit Cloud runs this file directly (not as a package).
+# Ensure local 'src' directory is ALWAYS at sys.path[0] to prevent loading
+# stale packages from site-packages.
 # ---------------------------------------------------------------------------
-if __package__ in (None, ""):
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+_src_dir = str(Path(__file__).resolve().parents[2])
+while _src_dir in sys.path:
+    sys.path.remove(_src_dir)
+sys.path.insert(0, _src_dir)
+
+_repo_root = str(Path(__file__).resolve().parents[3])
+if _repo_root not in sys.path:
+    sys.path.insert(1, _repo_root)
 
 from indian_intraday_ai.market_data.tick_handler import MarketTick, TickHandler              # noqa: E402
 from indian_intraday_ai.market_data.data_quality_monitor import DataQualityMonitor, DataState, IST  # noqa: E402

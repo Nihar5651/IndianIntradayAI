@@ -19,11 +19,55 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from indian_intraday_ai.indicators.technical import (
-    calculate_pivot_points,
-    calculate_camarilla_pivots,
-    calculate_cpr,
-)
+try:
+    from indian_intraday_ai.indicators.technical import (
+        calculate_pivot_points,
+        calculate_camarilla_pivots,
+        calculate_cpr,
+    )
+except (ImportError, AttributeError):
+    def calculate_pivot_points(high: float, low: float, close: float) -> dict[str, float]:
+        """Fallback Standard Floor Pivot Points."""
+        p = (high + low + close) / 3.0
+        diff = high - low
+        return {
+            "pivot": round(p, 2),
+            "r1": round(2 * p - low, 2),
+            "r2": round(p + diff, 2),
+            "r3": round(high + 2 * (p - low), 2),
+            "s1": round(2 * p - high, 2),
+            "s2": round(p - diff, 2),
+            "s3": round(low - 2 * (high - p), 2),
+        }
+
+    def calculate_camarilla_pivots(high: float, low: float, close: float) -> dict[str, float]:
+        """Fallback Camarilla Pivot Points."""
+        diff = high - low
+        return {
+            "h4": round(close + diff * (1.1 / 2.0), 2),
+            "h3": round(close + diff * (1.1 / 4.0), 2),
+            "h2": round(close + diff * (1.1 / 6.0), 2),
+            "h1": round(close + diff * (1.1 / 12.0), 2),
+            "l1": round(close - diff * (1.1 / 12.0), 2),
+            "l2": round(close - diff * (1.1 / 6.0), 2),
+            "l3": round(close - diff * (1.1 / 4.0), 2),
+            "l4": round(close - diff * (1.1 / 2.0), 2),
+        }
+
+    def calculate_cpr(high: float, low: float, close: float) -> dict[str, float]:
+        """Fallback Central Pivot Range."""
+        pivot = (high + low + close) / 3.0
+        bc = (high + low) / 2.0
+        tc = (pivot - bc) + pivot
+        width = abs(tc - bc)
+        width_pct = (width / pivot) * 100.0 if pivot > 0 else 0.0
+        return {
+            "pivot": round(pivot, 2),
+            "tc": round(max(tc, bc), 2),
+            "bc": round(min(tc, bc), 2),
+            "width": round(width, 2),
+            "width_pct": round(width_pct, 4),
+        }
 
 
 @dataclass
