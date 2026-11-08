@@ -471,85 +471,42 @@ def _render_trade_recommendation(
 
 
 # ---------------------------------------------------------------------------
-# Main
+# Main & Real-Time In-Place Fragment (Zero Page Reload)
 # ---------------------------------------------------------------------------
-def main() -> None:
-    st.set_page_config(
-        page_title="NIFTY Intraday Advisor",
-        page_icon="📈",
-        layout="wide",
-    )
-    _init_state()
 
+@st.fragment(run_every=REFRESH_INTERVAL)
+def render_live_dashboard() -> None:
+    """Continuously renders live market data, option chain Greeks, and AI recommendations
+    directly in-place in the browser WITHOUT full page reloads or screen flickering.
+    """
     dqm: DataQualityMonitor = st.session_state["dqm"]
     builder: CandleBuilder  = st.session_state["candle_builder"]
     history: list[float]    = st.session_state["ltp_history"]
 
-    # ------------------------------------------------------------------
-    # Auto-fetch (no button)
-    # ------------------------------------------------------------------
     secrets_ok  = _secrets_configured()
     market_open = _is_market_open()
     fetch_error: str | None = None
 
     if secrets_ok:
-        last_ts: datetime | None = st.session_state["last_fetch_ts"]
-        now = datetime.now(IST)
-        if last_ts is None or (now - last_ts).total_seconds() >= REFRESH_INTERVAL:
-            try:
-                _ingest_ltp(_fetch_ltp())
-            except Exception as exc:
-                fetch_error = str(exc)
-                dqm.set_error(str(exc))
+        try:
+            _ingest_ltp(_fetch_ltp())
+        except Exception as exc:
+            fetch_error = str(exc)
+            dqm.set_error(str(exc))
     else:
         dqm.set_demo()
 
-    # ------------------------------------------------------------------
-    # Page header
-    # ------------------------------------------------------------------
-    st.title("📈 NIFTY Intraday Option-Chain Advisor")
     now_ist = datetime.now(IST)
-    caption = f"IST {now_ist.strftime('%H:%M:%S')}"
-    caption += f"  ·  Auto-refresh every {REFRESH_INTERVAL}s" if market_open else "  ·  Market closed"
+    if market_open:
+        caption = f"IST {now_ist.strftime('%H:%M:%S')}  ·  🟢 Continuous Live Broker Feed ({REFRESH_INTERVAL}s cadence, zero page reload)"
+    else:
+        caption = f"IST {now_ist.strftime('%H:%M:%S')}  ·  🔵 Market closed (Live trading session: 09:15–15:30 IST)"
     st.caption(caption)
+
     if fetch_error:
         st.error(f"⚠️ LTP fetch error: {fetch_error}")
 
-    # ------------------------------------------------------------------
-    # Sidebar — connection + expiry config only
-    # ------------------------------------------------------------------
-    with st.sidebar:
-        st.header("Connection")
-        if secrets_ok:
-            st.success("✅ SmartAPI secrets found")
-        else:
-            st.error("❌ No SmartAPI secrets")
-        icon = STATE_ICONS.get(dqm.state.name, "❓")
-        st.metric("Status", f"{icon} {dqm.state.name}")
-        if dqm.last_ltp:
-            st.metric("NIFTY LTP", f"₹{dqm.last_ltp:,.2f}")
-        last_ts = st.session_state.get("last_fetch_ts")
-        if last_ts:
-            st.caption(f"Last fetch: {last_ts.strftime('%H:%M:%S IST')}")
-
-        auto_expiry_days = _calculate_next_expiry_days(now_ist)
-        st.session_state["expiry_days"] = auto_expiry_days
-
-        st.divider()
-        st.subheader("⚡ Automated Greeks Engine")
-        st.metric(
-            "Auto-Expiry Target",
-            f"{auto_expiry_days} calendar days",
-            help="Automatically calculated by AI to the nearest weekly Thursday expiry.",
-        )
-        st.caption("AI dynamically prices Delta, Gamma, Theta, Vega, IV, and POP.")
-
-        st.divider()
-        st.caption("🤖 100% Autonomous AI Trading Advisor\n\nContinuous real-time broker feed. No manual inputs required.")
-
-    # ------------------------------------------------------------------
-    # Status / candle / quality panels
-    # ------------------------------------------------------------------
+    # 1. Status / candle / quality panels
     _render_status(dqm)
     st.divider()
     _render_candles(builder)
@@ -557,9 +514,7 @@ def main() -> None:
     _render_quality(dqm)
     st.divider()
 
-    # ------------------------------------------------------------------
-    # Real Option Chain (Live SmartAPI or Real Settlement FO Bhavcopy)
-    # ------------------------------------------------------------------
+    # 2. Real Option Chain (Live SmartAPI or Real Settlement FO Bhavcopy)
     spot = dqm.last_ltp or 25_000.0
 
     smart_api_md = None
@@ -577,9 +532,7 @@ def main() -> None:
         expiry_days=st.session_state["expiry_days"],
     )
 
-    # ------------------------------------------------------------------
-    # Analysis + Greeks
-    # ------------------------------------------------------------------
+    # 3. Analysis + Greeks
     st.subheader("📊 Real-Time Option-Chain Analysis & Trade Signal")
     st.caption(f"Data Source: **{chain_source_label}**")
 
@@ -617,20 +570,48 @@ def main() -> None:
         st.error(f"Analysis error: {exc}")
         log.exception("Analysis failed: %s", exc)
 
-    # ------------------------------------------------------------------
-    # Continuous Real-Time Auto-Refresh Loop (100% Automated)
-    # ------------------------------------------------------------------
-    if secrets_ok:
-        if market_open:
-            time.sleep(REFRESH_INTERVAL)
-            st.rerun()
+
+def main() -> None:
+    st.set_page_config(
+        page_title="NIFTY Intraday Advisor",
+        page_icon="📈",
+        layout="wide",
+    )
+    _init_state()
+
+    # Static page header
+    st.title("📈 NIFTY Intraday Option-Chain Advisor")
+
+    # Static sidebar
+    now_ist = datetime.now(IST)
+    auto_expiry_days = _calculate_next_expiry_days(now_ist)
+    st.session_state["expiry_days"] = auto_expiry_days
+
+    secrets_ok = _secrets_configured()
+    with st.sidebar:
+        st.header("Connection")
+        if secrets_ok:
+            st.success("✅ SmartAPI secrets found")
         else:
-            st.caption("🔵 Regular session closed (09:15–15:30 IST Mon–Fri). Auto-refreshing every 20s to continuously monitor broker feed.")
-            time.sleep(20)
-            st.rerun()
-    else:
-        time.sleep(10)
-        st.rerun()
+            st.error("❌ No SmartAPI secrets")
+
+        st.divider()
+        st.subheader("⚡ Automated Greeks Engine")
+        st.metric(
+            "Auto-Expiry Target",
+            f"{auto_expiry_days} calendar days",
+            help="Automatically calculated by AI to the nearest weekly Thursday expiry.",
+        )
+        st.caption("AI dynamically prices Delta, Gamma, Theta, Vega, IV, and POP.")
+
+        st.divider()
+        st.caption(
+            "🤖 100% Autonomous AI Trading Advisor\n\n"
+            "Continuous real-time broker feed. Updates in-place without page reload."
+        )
+
+    # Launch the live in-place updating fragment
+    render_live_dashboard()
 
 
 if __name__ == "__main__":
