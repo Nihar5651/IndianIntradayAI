@@ -1,4 +1,4 @@
-﻿"""Live Signal Generation Engine for IndianIntradayAI.
+"""Live Signal Generation Engine for IndianIntradayAI.
 
 Integrates the 5-Layer Confluence Strategy Engine:
 1. Multi-Timeframe Alignment

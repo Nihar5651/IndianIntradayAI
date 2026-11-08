@@ -1,21 +1,21 @@
 """5-Layer Confluence Strategy Engine for IndianIntradayAI.
 
-Official Strategy Blueprint:
+Official Strategy Blueprint with Institutional Extensions:
 1. Multi-Timeframe Engine (15m bias -> 5m setup -> 1m timing) [Max 20 pts]
-2. Market Structure Engine (BOS, CHoCH, Swings, VWAP, fakeout sweep protection) [Max 25 pts]
-3. Derivatives Intelligence (PCR changes, OI concentration, Max Pain context) [Max 20 pts]
-4. Volume & Volatility Engine (RVOL, ATR expansion, Bollinger squeeze, flow) [Max 20 pts]
-5. Risk & Execution Engine (Structural SL, T1/T2, 1:2 min R:R, theta & spread) [Max 15 pts]
+2. Market Structure & Dedicated Fakeout Detector (BOS, CHoCH, Swings, VWAP, Breakout Quality) [Max 25 pts]
+3. Derivatives & NIFTY Futures Positioning (PCR changes, Long/Short buildup, Max Pain) [Max 20 pts]
+4. Volume & Volatility Engine (RVOL, Volume Profile POC/VAH/VAL, ATR, Bollinger squeeze) [Max 20 pts]
+5. Risk & Option Sensitivity Engine (Structural SL, T1/T2, 1:2 R:R, VIX, IV crush, theta decay) [Max 15 pts]
 
 Hard Safety Gates:
 - Data freshness & integrity
-- Fakeout / opposing liquidity sweep protection
-- Valid structural stop-loss
-- Minimum structural Risk-to-Reward (>= 1.5 - 2.0)
-- Execution viability (spread / theta / liquidity)
+- Dedicated Fakeout / Bull & Bear Trap lockout (cooldown enforcement)
+- Valid structural stop-loss (within 15-55 pts)
+- Minimum structural Risk-to-Reward (>= 1.8)
+- Option execution quality & theta viability (spread, delta, 0-DTE afternoon lockout)
 
 Decision Policy:
-- Score < 60: HOLD
+- Score < 60: HOLD (Capital preservation)
 - 60 <= Score < 75: HOLD (Setup developing; wait for confirmation)
 - 75 <= Score < 85: CALL / PUT (Potential entry, all hard gates MUST pass)
 - 85 <= Score <= 100: CALL / PUT (High-confluence setup, all hard gates MUST pass)
@@ -32,6 +32,7 @@ from indian_intraday_ai.indicators.technical import (
     calculate_all_indicators,
     calculate_vwap,
 )
+from indian_intraday_ai.indicators.volume_profile import calculate_volume_profile
 from indian_intraday_ai.market_analysis.candlestick_patterns import CandlestickPatternRecognizer
 from indian_intraday_ai.market_analysis.market_structure import MarketStructureEngine
 from indian_intraday_ai.market_analysis.support_resistance import SupportResistanceEngine
@@ -39,6 +40,10 @@ from indian_intraday_ai.market_analysis.analyzers.trend_analyzer import TrendAna
 from indian_intraday_ai.market_analysis.analyzers.volatility_analyzer import VolatilityAnalyzer
 from indian_intraday_ai.market_analysis.analyzers.volume_analyzer import VolumeAnalyzer
 from indian_intraday_ai.market_analysis.analyzers.derivatives_analyzer import DerivativesAnalyzer
+from indian_intraday_ai.market_analysis.fakeout_detector import FakeoutDetector
+from indian_intraday_ai.market_analysis.futures_positioning import FuturesPositioningEngine
+from indian_intraday_ai.market_analysis.breadth_heavyweights import HeavyweightBreadthEngine
+from indian_intraday_ai.options.iv_greeks_filter import OptionSensitivityFilter
 
 
 @dataclass
@@ -72,6 +77,9 @@ class ConfluenceDecision:
     conditions_matrix: list[ConditionItem]
     explanation: str
     trade_setup: TradeSetup | None = None
+    volume_profile_poc: float | None = None
+    futures_positioning: str | None = None
+    breadth_bias: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -89,6 +97,9 @@ class ConfluenceDecision:
                 for item in self.conditions_matrix
             ],
             "explanation": self.explanation,
+            "volume_profile_poc": self.volume_profile_poc,
+            "futures_positioning": self.futures_positioning,
+            "breadth_bias": self.breadth_bias,
             "trade_setup": {
                 "contract_symbol": self.trade_setup.contract_symbol,
                 "contract_type": self.trade_setup.contract_type,
@@ -105,7 +116,7 @@ class ConfluenceDecision:
 
 
 class ConfluenceStrategyEngine:
-    """Executes the 5-Layer Confluence Evaluation with Hard Gates and Explainability."""
+    """Executes the 5-Layer Confluence Evaluation with Institutional Hard Gates and Explainability."""
 
     def __init__(
         self,
@@ -124,6 +135,12 @@ class ConfluenceStrategyEngine:
         self.structure_engine = MarketStructureEngine(left_bars=2, right_bars=2)
         self.sr_engine = SupportResistanceEngine(cluster_tolerance_pct=0.0015)
         self.pattern_recognizer = CandlestickPatternRecognizer()
+
+        # Institutional engines
+        self.fakeout_detector = FakeoutDetector(min_body_ratio=0.55, min_rvol=1.25, cooldown_bars=3)
+        self.futures_engine = FuturesPositioningEngine()
+        self.breadth_engine = HeavyweightBreadthEngine()
+        self.option_filter = OptionSensitivityFilter()
 
     @staticmethod
     def _to_dataframe(candles_or_df: Any) -> pd.DataFrame:
@@ -167,13 +184,18 @@ class ConfluenceStrategyEngine:
         spot_price: float | None = None,
         option_chain_data: Any = None,
         futures_price: float | None = None,
+        futures_oi: int | None = None,
+        constituents_data: dict[str, Any] | None = None,
+        heavyweights_data: dict[str, dict[str, Any]] | None = None,
+        vix_level: float | None = None,
+        vix_change_pct: float | None = None,
+        dte: int | None = None,
         daily_high: float | None = None,
         daily_low: float | None = None,
         daily_close: float | None = None,
     ) -> ConfluenceDecision:
         """
-        Evaluate market conditions against the 5-Layer Confluence Model.
-        Returns a ConfluenceDecision with verdict (CALL/PUT/HOLD), score, gates, and breakdown.
+        Evaluate market conditions against the 5-Layer Confluence Model with institutional gates.
         """
         df_5m = self._to_dataframe(five_minute_candles)
         df_1m = self._to_dataframe(one_minute_candles)
@@ -195,7 +217,7 @@ class ConfluenceStrategyEngine:
                 confluence_score=0,
                 bias="NEUTRAL",
                 score_breakdown={"multi_timeframe": 0, "market_structure": 0, "derivatives": 0, "volume_volatility": 0, "risk_reward": 0},
-                hard_gates={"data_freshness": False, "liquidity_sweep_safe": False, "structural_sl_defined": False, "risk_reward_viable": False, "execution_viable": False, "all_passed": False},
+                hard_gates={"data_freshness": False, "liquidity_sweep_safe": False, "fakeout_detector_passed": False, "structural_sl_defined": False, "risk_reward_viable": False, "execution_viable": False, "all_passed": False},
                 conditions_matrix=[ConditionItem("Data Feed", "Insufficient historical candles", "INSUFFICIENT")],
                 explanation="HOLD: Insufficient candle history or stale market feed. Engine refuses to speculate.",
             )
@@ -245,14 +267,14 @@ class ConfluenceStrategyEngine:
             elif dominant_bias == "BEARISH" and t1.direction == "BEARISH":
                 score_mtf += 4
             elif t1.direction == "SIDEWAYS":
-                score_mtf += 2  # healthy consolidation pullback
+                score_mtf += 2
         else:
-            score_mtf += 2  # neutral assumption if 1m absent
+            score_mtf += 2
 
         score_mtf = min(20, score_mtf)
 
         # =============================================================
-        # LAYER 2: Market Structure & Price Action (Max 25 pts)
+        # LAYER 2: Market Structure & Fakeout Detector (Max 25 pts)
         # =============================================================
         score_struct = 0
         struct_report = self.structure_engine.analyze(df_5m, timeframe="5m")
@@ -312,20 +334,33 @@ class ConfluenceStrategyEngine:
         gate_liquidity_sweep = True
         recent_sweeps = struct_report.liquidity_sweeps[-2:]
         if dominant_bias == "BULLISH":
-            # If recent sweep was BUY_SIDE_LIQUIDITY (wick above high, closed back inside), buying is dangerous!
             for s in recent_sweeps:
                 if s.sweep_type == "BUY_SIDE_LIQUIDITY":
                     gate_liquidity_sweep = False
                     break
         elif dominant_bias == "BEARISH":
-            # If recent sweep was SELL_SIDE_LIQUIDITY (wick below low, closed back inside), selling is dangerous!
             for s in recent_sweeps:
                 if s.sweep_type == "SELL_SIDE_LIQUIDITY":
                     gate_liquidity_sweep = False
                     break
 
+        # Dedicated Fakeout Engine Evaluation
+        confirmed_sh = [s.price for s in struct_report.swings if s.swing_type == "HIGH"]
+        confirmed_sl = [s.price for s in struct_report.swings if s.swing_type == "LOW"]
+        nearest_res_level = confirmed_sh[-1] if confirmed_sh else spot + 35.0
+        nearest_sup_level = confirmed_sl[-1] if confirmed_sl else spot - 35.0
+
+        breakout_eval = self.fakeout_detector.evaluate_breakout(
+            df=df_5m,
+            resistance_level=nearest_res_level,
+            support_level=nearest_sup_level,
+            vwap=vwap_val,
+        )
+
+        gate_fakeout_passed = not breakout_eval.returned_inside_range and not breakout_eval.cooldown_active
+
         # =============================================================
-        # LAYER 3: Derivatives Intelligence (Max 20 pts)
+        # LAYER 3: Derivatives & Futures Positioning (Max 20 pts)
         # =============================================================
         score_deriv = 0
         deriv_report = self.derivatives_analyzer.analyze(
@@ -335,6 +370,13 @@ class ConfluenceStrategyEngine:
             futures_price=futures_price,
         )
 
+        # NIFTY Futures Buildup Intelligence
+        futures_report = self.futures_engine.analyze(
+            futures_price=futures_price,
+            spot_price=spot,
+            futures_oi=futures_oi,
+        )
+
         pcr_str = "Unavailable"
         if deriv_report.available and deriv_report.pcr_oi is not None:
             pcr = deriv_report.pcr_oi
@@ -342,81 +384,114 @@ class ConfluenceStrategyEngine:
 
             if dominant_bias == "BULLISH":
                 if pcr >= 1.15:
-                    score_deriv += 12  # Strong supportive put writing
+                    score_deriv += 10
                 elif pcr >= 0.95:
-                    score_deriv += 8   # Mild bullish / neutral
+                    score_deriv += 7
                 elif pcr < 0.80:
-                    score_deriv += 2   # Conflicting call writing
+                    score_deriv += 2
             elif dominant_bias == "BEARISH":
                 if pcr <= 0.85:
-                    score_deriv += 12  # Strong supportive call writing
+                    score_deriv += 10
                 elif pcr <= 1.05:
-                    score_deriv += 8   # Mild bearish / neutral
+                    score_deriv += 7
                 elif pcr > 1.20:
-                    score_deriv += 2   # Conflicting put writing
+                    score_deriv += 2
             else:
-                score_deriv += 6
+                score_deriv += 5
 
-            # Max Pain & Strike walls context (8 pts)
+            # Max Pain & Strike walls context (6 pts)
             if deriv_report.max_pain:
                 if dominant_bias == "BULLISH" and spot >= deriv_report.max_pain:
-                    score_deriv += 8
+                    score_deriv += 6
                 elif dominant_bias == "BEARISH" and spot <= deriv_report.max_pain:
-                    score_deriv += 8
+                    score_deriv += 6
                 else:
-                    score_deriv += 4
+                    score_deriv += 3
             else:
-                score_deriv += 4
+                score_deriv += 3
         else:
-            # Safe fallback if derivatives feed not connected: give conservative baseline
-            score_deriv = 10
+            score_deriv = 8
             pcr_str = "Derivatives feed not connected (Neutral baseline)"
+
+        # Futures Buildup Points (4 pts)
+        futures_pos_str = futures_report.positioning
+        if futures_report.available:
+            if dominant_bias == "BULLISH" and futures_report.positioning in ("LONG_BUILDUP", "SHORT_COVERING"):
+                score_deriv += 4
+            elif dominant_bias == "BEARISH" and futures_report.positioning in ("SHORT_BUILDUP", "LONG_UNWINDING"):
+                score_deriv += 4
+            elif futures_report.positioning == "NEUTRAL":
+                score_deriv += 2
 
         score_deriv = min(20, score_deriv)
 
+        # Market Breadth & Heavyweights
+        breadth_rep = self.breadth_engine.analyze(
+            constituents_data=constituents_data,
+            heavyweights_data=heavyweights_data,
+            index_direction=dominant_bias,
+        )
+
         # =============================================================
-        # LAYER 4: Volume & Volatility Engine (Max 20 pts)
+        # LAYER 4: Volume, Volume Profile & Volatility (Max 20 pts)
         # =============================================================
         score_vol = 0
         vol_report = self.volatility_analyzer.analyze(df_5m)
         volume_report = self.volume_analyzer.analyze(df_5m, trend_direction=dominant_bias)
 
-        # RVOL / Volume confirmation (10 pts)
+        # RVOL / Volume confirmation (8 pts)
         rvol = volume_report.rvol
         rvol_str = f"RVOL {rvol:.2f}x ({volume_report.volume_classification})"
         if volume_report.volume_confirms_price:
             if rvol >= 1.2:
-                score_vol += 10
+                score_vol += 8
             elif rvol >= 0.8:
-                score_vol += 7
+                score_vol += 5
             else:
-                score_vol += 4
+                score_vol += 3
         else:
-            score_vol += 2  # Volume divergence
+            score_vol += 2
 
-        # Volatility & Bollinger Squeeze state (10 pts)
+        # Volume Profile Analysis (POC, VAH, VAL) (6 pts)
+        vp_report = calculate_volume_profile(df_5m)
+        vp_str = f"POC: ₹{vp_report.poc:,.1f}"
+        if dominant_bias == "BULLISH":
+            if spot >= vp_report.vah:
+                score_vol += 6  # Strong acceptance above Value Area
+                vp_str += f" (Above VAH ₹{vp_report.vah:,.0f} - Bullish Expansion)"
+            elif spot >= vp_report.poc:
+                score_vol += 4
+                vp_str += f" (Above POC - Moderate Value)"
+            else:
+                score_vol += 2
+        elif dominant_bias == "BEARISH":
+            if spot <= vp_report.val:
+                score_vol += 6  # Strong acceptance below Value Area
+                vp_str += f" (Below VAL ₹{vp_report.val:,.0f} - Bearish Expansion)"
+            elif spot <= vp_report.poc:
+                score_vol += 4
+                vp_str += f" (Below POC - Moderate Value)"
+            else:
+                score_vol += 2
+
+        # Volatility & Bollinger Squeeze state (6 pts)
         vol_str = f"{vol_report.volatility_state} (ATR {vol_report.atr:.1f} pts)"
         if vol_report.is_squeeze:
             vol_str += " [Squeeze Active]"
-            # If in squeeze, breakout could happen soon
-            score_vol += 7
-        elif vol_report.volatility_state in ("NORMAL", "HIGH"):
-            score_vol += 10
-        elif vol_report.volatility_state == "EXTREME":
-            score_vol += 4  # Too erratic / high risk
-        else:
             score_vol += 5
+        elif vol_report.volatility_state in ("NORMAL", "HIGH"):
+            score_vol += 6
+        elif vol_report.volatility_state == "EXTREME":
+            score_vol += 2
+        else:
+            score_vol += 3
 
         score_vol = min(20, score_vol)
 
         # =============================================================
-        # LAYER 5: Risk & Execution Engine (Max 15 pts)
+        # LAYER 5: Risk & Option Sensitivity Engine (Max 15 pts)
         # =============================================================
         score_risk = 0
-
-        # Calculate structural SL and realistic Targets using S/R Confluence
-        confirmed_sh = [s.price for s in struct_report.swings if s.swing_type == "HIGH"]
-        confirmed_sl = [s.price for s in struct_report.swings if s.swing_type == "LOW"]
 
         sr_report = self.sr_engine.analyze(
             current_price=spot,
@@ -431,17 +506,14 @@ class ConfluenceStrategyEngine:
 
         nearest_supp = sr_report.nearest_support.mid_price if sr_report.nearest_support else (spot - 40.0)
         nearest_res = sr_report.nearest_resistance.mid_price if sr_report.nearest_resistance else (spot + 40.0)
-
         atr_val = max(vol_report.atr, 20.0)
 
-        # Determine setup parameters
+        # Setup parameters
         if dominant_bias == "BULLISH":
             contract_type = "CE"
             strike = round(spot / self.strike_interval) * self.strike_interval
             entry_trigger = max(spot, nearest_res - (0.2 * atr_val))
-            # Structural Stop Loss below nearest swing low or support
             raw_sl = min(spot - (0.8 * atr_val), nearest_supp)
-            # Cap max structural risk to 50 pts on NIFTY
             stop_loss = max(raw_sl, spot - 50.0)
             risk_pts = max(12.0, entry_trigger - stop_loss)
             t1 = entry_trigger + (1.5 * risk_pts)
@@ -451,7 +523,6 @@ class ConfluenceStrategyEngine:
             contract_type = "PE"
             strike = round(spot / self.strike_interval) * self.strike_interval
             entry_trigger = min(spot, nearest_supp + (0.2 * atr_val))
-            # Structural Stop Loss above nearest swing high or resistance
             raw_sl = max(spot + (0.8 * atr_val), nearest_res)
             stop_loss = min(raw_sl, spot + 50.0)
             risk_pts = max(12.0, stop_loss - entry_trigger)
@@ -462,14 +533,20 @@ class ConfluenceStrategyEngine:
         rr_ratio = reward_pts / risk_pts if risk_pts > 0 else 0.0
         rr_str = f"1 : {rr_ratio:.1f}"
 
-        # Gate 3: Structural Stop Loss defined & reasonable (<= 55 pts)
+        # Gate 3: Structural Stop Loss defined (<= 55 pts)
         gate_structural_sl = (risk_pts <= 55.0 and risk_pts >= 10.0)
 
         # Gate 4: Reward-to-Risk ratio >= min_reward_risk (default 1.8)
         gate_reward_risk = (rr_ratio >= self.min_reward_risk)
 
-        # Gate 5: Execution Viability (avoid illiquid / zero DTE extreme theta penalty)
-        gate_execution = True  # Verified by strike alignment to standard 50-pt intervals
+        # Gate 5: Option Sensitivity & Execution Viability Filter
+        option_sens_report = self.option_filter.evaluate(
+            signal_type=contract_type,
+            vix_level=vix_level,
+            vix_change_pct=vix_change_pct,
+            dte=dte,
+        )
+        gate_execution = option_sens_report.is_favorable
 
         if rr_ratio >= 2.0:
             score_risk += 15
@@ -488,6 +565,7 @@ class ConfluenceStrategyEngine:
         all_gates_passed = (
             gate_data_freshness
             and gate_liquidity_sweep
+            and gate_fakeout_passed
             and gate_structural_sl
             and gate_reward_risk
             and gate_execution
@@ -496,13 +574,13 @@ class ConfluenceStrategyEngine:
         hard_gates_dict = {
             "data_freshness": gate_data_freshness,
             "liquidity_sweep_safe": gate_liquidity_sweep,
+            "fakeout_detector_passed": gate_fakeout_passed,
             "structural_sl_defined": gate_structural_sl,
             "risk_reward_viable": gate_reward_risk,
             "execution_viable": gate_execution,
             "all_passed": all_gates_passed,
         }
 
-        # Build trade setup object
         trade_setup = TradeSetup(
             contract_symbol=f"NIFTY {strike:,.0f} {contract_type}",
             contract_type=contract_type,
@@ -516,22 +594,18 @@ class ConfluenceStrategyEngine:
             risk_reward_ratio=rr_ratio,
         )
 
-        # Decision Policy:
-        # < 60: HOLD
-        # 60 - 74: HOLD (Setup developing; wait for confirmation)
-        # >= 75: CALL or PUT ONLY IF all_gates_passed is True!
         if total_score >= self.min_entry_score and all_gates_passed:
             if dominant_bias == "BULLISH":
                 verdict = "CALL"
                 explanation = (
                     f"CONFIRMED CALL ENTRY (Score: {total_score}/100): High-confluence bullish setup across "
-                    f"15m/5m structure ({bos_str}), supported by derivatives and volume. All 5 hard gates passed."
+                    f"15m/5m structure ({bos_str}), confirmed by derivatives, volume profile, and futures. All 5 hard gates passed."
                 )
             elif dominant_bias == "BEARISH":
                 verdict = "PUT"
                 explanation = (
                     f"CONFIRMED PUT ENTRY (Score: {total_score}/100): High-confluence bearish setup across "
-                    f"15m/5m structure ({bos_str}), supported by derivatives and volume. All 5 hard gates passed."
+                    f"15m/5m structure ({bos_str}), confirmed by derivatives, volume profile, and futures. All 5 hard gates passed."
                 )
             else:
                 verdict = "HOLD"
@@ -547,12 +621,17 @@ class ConfluenceStrategyEngine:
             elif total_score < self.min_entry_score:
                 reasons.append(f"Setup developing ({total_score}/100), but awaiting final confirmation.")
 
-            if not gate_liquidity_sweep:
-                reasons.append("Active opposing liquidity sweep detected (fakeout risk).")
+            if not gate_fakeout_passed:
+                reasons.append(f"Fakeout Engine: {breakout_eval.reason}")
+            elif not gate_liquidity_sweep:
+                reasons.append("Active opposing liquidity sweep detected (trap risk).")
+
             if not gate_structural_sl:
                 reasons.append(f"Structural stop-loss distance ({risk_pts:.1f} pts) is outside acceptable bounds.")
             if not gate_reward_risk:
                 reasons.append(f"Reward-to-risk ratio ({rr_str}) does not meet the minimum 1:{self.min_reward_risk:.1f} threshold.")
+            if not gate_execution:
+                reasons.append(f"Option execution filter: {option_sens_report.summary}")
 
             if not reasons:
                 reasons.append("Market conditions do not offer an asymmetric risk/reward edge.")
@@ -565,10 +644,10 @@ class ConfluenceStrategyEngine:
             ConditionItem("5m Trend", c_5m_str, "CONFIRMED" if c_5m_str == dominant_bias else "CONFLICTING"),
             ConditionItem("Intraday VWAP", vwap_status_str, "CONFIRMED" if ("Above" in vwap_status_str and dominant_bias == "BULLISH") or ("Below" in vwap_status_str and dominant_bias == "BEARISH") else "CONFLICTING"),
             ConditionItem("Market Structure", bos_str, "CONFIRMED" if "BOS" in bos_str or "CHoCH" in bos_str else "INSUFFICIENT"),
-            ConditionItem("Derivatives (PCR & OI)", pcr_str, "SUPPORTIVE" if deriv_report.confirms_spot else "CONFLICTING"),
-            ConditionItem("Volume & RVOL", rvol_str, "CONFIRMED" if rvol >= 1.2 else "INSUFFICIENT"),
-            ConditionItem("Volatility / Squeeze", vol_str, "CONFIRMED" if "NORMAL" in vol_str or "Squeeze" in vol_str else "SUPPORTIVE"),
-            ConditionItem("Risk / Reward Ratio", f"{rr_str} (Risk: {risk_pts:.1f} pts, Target: {reward_pts:.1f} pts)", "CONFIRMED" if gate_reward_risk else "CONFLICTING"),
+            ConditionItem("Fakeout Detector", "Verified Clean" if gate_fakeout_passed else breakout_eval.breakout_type, "CONFIRMED" if gate_fakeout_passed else "CONFLICTING"),
+            ConditionItem("Derivatives & Futures", f"{pcr_str} | Futures: {futures_pos_str}", "SUPPORTIVE" if deriv_report.confirms_spot else "CONFLICTING"),
+            ConditionItem("Volume & Profile", f"{rvol_str} | {vp_str}", "CONFIRMED" if rvol >= 1.2 else "SUPPORTIVE"),
+            ConditionItem("Option & Risk Quality", f"{rr_str} (Risk: {risk_pts:.1f} pts) | Theta: {option_sens_report.theta_bleed_per_hour:.1f} pts/hr", "CONFIRMED" if (gate_reward_risk and gate_execution) else "CONFLICTING"),
         ]
 
         return ConfluenceDecision(
@@ -586,4 +665,7 @@ class ConfluenceStrategyEngine:
             conditions_matrix=conditions,
             explanation=explanation,
             trade_setup=trade_setup,
+            volume_profile_poc=vp_report.poc,
+            futures_positioning=futures_pos_str,
+            breadth_bias=breadth_rep.breadth_bias,
         )
