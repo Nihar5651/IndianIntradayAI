@@ -1,0 +1,9 @@
+# ============================================================
+# Streamlit config – shared settings (safe to commit)
+# ============================================================
+[server]
+headless = true
+enableCORS = false
+
+[theme]
+base = "dark"
