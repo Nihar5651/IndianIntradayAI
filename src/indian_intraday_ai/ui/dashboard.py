@@ -17,6 +17,7 @@ import time
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 import streamlit as st
@@ -188,6 +189,66 @@ def _auto_atr(history: list[float]) -> float:
     return 50.0
 
 
+def _compute_technical_indicators(history: list[float], spot: float) -> dict[str, Any]:
+    """Compute live technical indicators (RSI 14, EMA 9, EMA 21, and trend)."""
+    # 1. RSI (14)
+    if len(history) >= 14:
+        s = pd.Series(history)
+        delta = s.diff()
+        gains = delta.clip(lower=0)
+        losses = -delta.clip(upper=0)
+        avg_gain = gains.ewm(alpha=1 / 14, adjust=False).mean()
+        avg_loss = losses.ewm(alpha=1 / 14, adjust=False).mean()
+        last_gain = avg_gain.iloc[-1]
+        last_loss = avg_loss.iloc[-1]
+        if last_loss == 0:
+            rsi = 100.0 if last_gain > 0 else 50.0
+        else:
+            rs = last_gain / (last_loss + 1e-9)
+            rsi = 100.0 - (100.0 / (1.0 + rs))
+        rsi = round(max(0.0, min(100.0, float(rsi))), 1)
+    else:
+        rsi = 50.0
+
+    if rsi >= 70:
+        rsi_zone = "Overbought (≥70)"
+    elif rsi <= 30:
+        rsi_zone = "Oversold (≤30)"
+    elif rsi >= 55:
+        rsi_zone = "Bullish (55–70)"
+    elif rsi <= 45:
+        rsi_zone = "Bearish (30–45)"
+    else:
+        rsi_zone = "Neutral (45–55)"
+
+    # 2. EMAs
+    if len(history) >= 5:
+        s = pd.Series(history)
+        ema9 = round(float(s.ewm(span=9, adjust=False).mean().iloc[-1]), 2)
+        ema21 = round(float(s.ewm(span=21, adjust=False).mean().iloc[-1]), 2) if len(history) >= 10 else None
+    else:
+        ema9 = round(spot, 2)
+        ema21 = None
+
+    if ema21 is not None:
+        if ema9 > ema21:
+            ema_trend = "🟢 Bullish (EMA 9 > 21)"
+        elif ema9 < ema21:
+            ema_trend = "🔴 Bearish (EMA 9 < 21)"
+        else:
+            ema_trend = "⚪ Neutral"
+    else:
+        ema_trend = "⚪ Initializing"
+
+    return {
+        "rsi": rsi,
+        "rsi_zone": rsi_zone,
+        "ema9": ema9,
+        "ema21": ema21,
+        "ema_trend": ema_trend,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Greeks-enhanced signal selection
 # ---------------------------------------------------------------------------
@@ -299,162 +360,238 @@ def _render_quality(dqm: DataQualityMonitor) -> None:
 
 
 def _render_trade_recommendation(
-    signal: str,
-    reason: str,
     advice,
     chain_analysis,
-    best_strike: OptionGreeks | None,
+    best_ce: OptionGreeks | None,
+    best_pe: OptionGreeks | None,
     all_greeks: list[OptionGreeks],
     regime: dict,
     chain_source_label: str,
     spot: float,
+    atr_pts: float,
+    tech_indicators: dict[str, Any],
 ) -> None:
-    action_icon = ACTION_ICONS.get(advice.action, "❓")
     regime_name = regime.get("regime", "UNCERTAIN")
     regime_dir  = regime.get("direction", "UNKNOWN")
 
-    # ── Top banner ────────────────────────────────────────────────────────
-    if advice.action == "NO_TRADE":
-        st.info(f"🟡 **NO TRADE** — {reason}")
+    # ── Pre-calculate entry triggers & risk levels for BOTH sides ──────
+    call_trigger = round(spot + max(12.0, 0.30 * atr_pts), 1)
+    call_sl      = round(spot - 0.65 * atr_pts, 1)
+    call_t1      = round(call_trigger + 1.0 * atr_pts, 1)
+    call_t2      = round(call_trigger + 2.0 * atr_pts, 1)
+    call_active  = spot >= call_trigger
+
+    put_trigger  = round(spot - max(12.0, 0.30 * atr_pts), 1)
+    put_sl       = round(spot + 0.65 * atr_pts, 1)
+    put_t1       = round(put_trigger - 1.0 * atr_pts, 1)
+    put_t2       = round(put_trigger - 2.0 * atr_pts, 1)
+    put_active   = spot <= put_trigger
+
+    # ── 1. Live Technical & Derivatives Indicators Bar ─────────────────
+    st.subheader("📈 Live Technical & Market Structure Indicators")
+    i1, i2, i3, i4, i5, i6 = st.columns(6)
+    i1.metric("RSI (14)", f"{tech_indicators['rsi']:.1f}", tech_indicators["rsi_zone"])
+    i2.metric("OI PCR", _fmt(chain_analysis.put_call_oi_ratio), chain_analysis.sentiment)
+    i3.metric("Volume PCR", _fmt(chain_analysis.put_call_volume_ratio))
+    i4.metric("Max Pain Strike", _fmt(chain_analysis.max_pain_strike))
+    i5.metric("PE Major Support", _fmt(chain_analysis.support_strike))
+    i6.metric("CE Major Resist", _fmt(chain_analysis.resistance_strike))
+
+    st.divider()
+
+    # ── 2. Master AI Trade Direction & Alert Banner ────────────────────
+    if call_active and chain_analysis.sentiment != "BEARISH":
+        banner_bg = "linear-gradient(90deg, #065f46 0%, #047857 100%)"
+        banner_border = "#10b981"
+        banner_title = "🟢 ACTIVE INTRADAY CALL ENTRY TRIGGERED"
+        target_strike = f"{best_ce.strike:,.0f} CE" if best_ce else "ATM CE"
+        banner_sub = (
+            f"Spot (₹{spot:,.2f}) has crossed above breakout trigger ₹{call_trigger:,.1f}. "
+            f"Bullish setup active. Optimal Strike: <strong>{target_strike}</strong>. "
+            f"Target 1: ₹{call_t1:,.1f} | Invalidation Stop Loss: ₹{call_sl:,.1f}."
+        )
+    elif put_active and chain_analysis.sentiment != "BULLISH":
+        banner_bg = "linear-gradient(90deg, #7f1d1d 0%, #991b1b 100%)"
+        banner_border = "#ef4444"
+        banner_title = "🔴 ACTIVE INTRADAY PUT ENTRY TRIGGERED"
+        target_strike = f"{best_pe.strike:,.0f} PE" if best_pe else "ATM PE"
+        banner_sub = (
+            f"Spot (₹{spot:,.2f}) has dropped below breakdown trigger ₹{put_trigger:,.1f}. "
+            f"Bearish setup active. Optimal Strike: <strong>{target_strike}</strong>. "
+            f"Target 1: ₹{put_t1:,.1f} | Invalidation Stop Loss: ₹{put_sl:,.1f}."
+        )
     else:
-        colour = "green" if advice.action == "BUY_CALL" else "red"
+        banner_bg = "linear-gradient(90deg, #1e293b 0%, #0f172a 100%)"
+        banner_border = "#3b82f6"
+        banner_title = "🎯 DUAL STRATEGY ACTIVE — BREAKOUT WATCH"
+        banner_sub = (
+            f"NIFTY spot is in range (₹{put_trigger:,.1f} – ₹{call_trigger:,.1f}). "
+            f"Derivatives Sentiment: <strong>{chain_analysis.sentiment}</strong> | Regime: <strong>{regime_name}</strong>. "
+            f"Both CALL and PUT strategies are pre-calculated below. Trigger BUY on breakout."
+        )
+
+    st.markdown(
+        f"<div style='background:{banner_bg}; border:1px solid {banner_border}; padding:16px 20px;"
+        f"border-radius:10px; margin-bottom:18px;'>"
+        f"<h2 style='color:#ffffff; margin:0 0 6px 0; font-size:1.35rem;'>{banner_title}</h2>"
+        f"<p style='margin:0; color:#e2e8f0; font-size:0.95rem;'>{banner_sub}</p>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+    # ── 3. Dual Strategy Matrix (CALL & PUT Side-by-Side) ─────────────
+    st.subheader("⚡ Dual Option Strategy Matrix (Pre-Calculated Entry Setups)")
+    st.caption(f"Data Source: **{chain_source_label}**  ·  Real Greeks dynamically calculated via Black-Scholes engine.")
+
+    col_call, col_put = st.columns(2)
+
+    # === CALL STRATEGY (Bullish Setup) ===
+    with col_call:
+        call_badge_bg = "#065f46" if call_active else "#374151"
+        call_badge_color = "#34d399" if call_active else "#d1d5db"
+        call_badge_text = "🟢 TRIGGER ACTIVE (IN PLAY)" if call_active else f"⏳ AWAITING BREAKOUT (> ₹{call_trigger:,.1f})"
+
         st.markdown(
-            f"<div style='background:{'#1a4d1a' if colour=='green' else '#4d1a1a'};"
-            f"padding:16px;border-radius:8px;margin-bottom:12px'>"
-            f"<h2 style='color:{'#4CAF50' if colour=='green' else '#f44336'};margin:0'>"
-            f"{action_icon} {advice.action.replace('_', ' ')}</h2>"
-            f"<p style='margin:4px 0 0;color:#ccc'>Confidence: {advice.confidence}/95 &nbsp;|&nbsp; "
-            f"Regime: {regime_name} &nbsp;|&nbsp; Direction: {regime_dir}</p>"
+            f"<div style='background: linear-gradient(180deg, rgba(16, 185, 129, 0.12) 0%, rgba(17, 24, 39, 0.95) 100%);"
+            f"border: 1px solid rgba(16, 185, 129, 0.4); border-radius: 10px; padding: 14px 16px; margin-bottom: 12px;'>"
+            f"<div style='display:flex; justify-content:space-between; align-items:center;'>"
+            f"<h3 style='margin:0; color:#34d399; font-size:1.15rem;'>📞 CALL STRATEGY (Bullish Setup)</h3>"
+            f"<span style='background:{call_badge_bg}; color:{call_badge_color}; padding:4px 10px; border-radius:12px; font-weight:700; font-size:0.75rem;'>{call_badge_text}</span>"
+            f"</div>"
+            f"<p style='margin:4px 0 0; color:#9ca3af; font-size:0.82rem;'>Optimal Contract for Intraday Upside Momentum</p>"
             f"</div>",
             unsafe_allow_html=True,
         )
 
-    # ── Recommended contract ────────────────────────────────────────────
-    if best_strike and advice.action != "NO_TRADE":
-        st.subheader("🎯 Recommended Contract")
-        st.caption(f"Data source: **{chain_source_label}**")
+        if best_ce:
+            ce = best_ce
+            cm1, cm2, cm3 = st.columns(3)
+            cm1.metric("Recommended Strike", f"₹{ce.strike:,.0f} CE")
+            cm2.metric("Option Premium", f"₹{ce.market_price:.2f}")
+            cm3.metric("B-S Model Fair Price", f"₹{ce.model_price:.2f}")
 
-        b = best_strike
-        c1, c2, c3, c4, c5, c6 = st.columns(6)
-        c1.metric("Strike",         f"₹{b.strike:,.0f}")
-        c2.metric("Type",           f"{'📞 CALL' if b.option_type=='CE' else '📉 PUT'}")
-        c3.metric("Premium (mkt)",  f"₹{b.market_price:.2f}")
-        c4.metric("Moneyness",      b.moneyness)
-        c5.metric("Expiry",         f"{b.expiry_days}d")
-        c6.metric("Model price",    f"₹{b.model_price:.2f}")
+            ct1, ct2, ct3 = st.columns(3)
+            ct1.metric("Entry Trigger (Spot)", f"₹{call_trigger:,.1f}")
+            ct2.metric("Stop Loss (Spot)", f"₹{call_sl:,.1f}", f"-₹{abs(spot - call_sl):.1f} pts", delta_color="inverse")
+            ct3.metric("Target 1 (Spot)", f"₹{call_t1:,.1f}", f"+₹{abs(call_t1 - spot):.1f} pts")
 
-        # Entry / levels
-        c7, c8, c9 = st.columns(3)
-        c7.metric("Spot entry ref",  _fmt(advice.entry_trigger))
-        c8.metric("Invalidation",    _fmt(advice.invalidation_level))
-        c9.metric("First objective", _fmt(advice.first_objective))
+            st.caption("⚡ **Option Greeks (CALL)**")
+            cg1, cg2, cg3, cg4, cg5, cg6 = st.columns(6)
+            cg1.metric("Delta (Δ)", f"{ce.delta:+.3f}")
+            cg2.metric("Gamma (Γ)", f"{ce.gamma:.5f}")
+            cg3.metric("Theta (Θ)/d", f"₹{ce.theta:.2f}")
+            cg4.metric("Vega (ν)", f"₹{ce.vega:.2f}")
+            cg5.metric("IV", f"{ce.iv_pct:.1f}%")
+            cg6.metric("POP", f"{ce.pop:.0f}%")
+        else:
+            st.warning("No optimal CALL contract found in chain.")
 
-    elif advice.action != "NO_TRADE":
-        st.warning("No suitable strike found within delta range 0.30–0.50.")
-        c7, c8, c9 = st.columns(3)
-        c7.metric("Spot entry ref",  _fmt(advice.entry_trigger))
-        c8.metric("Invalidation",    _fmt(advice.invalidation_level))
-        c9.metric("First objective", _fmt(advice.first_objective))
+    # === PUT STRATEGY (Bearish Setup) ===
+    with col_put:
+        put_badge_bg = "#7f1d1d" if put_active else "#374151"
+        put_badge_color = "#f87171" if put_active else "#d1d5db"
+        put_badge_text = "🔴 TRIGGER ACTIVE (IN PLAY)" if put_active else f"⏳ AWAITING BREAKDOWN (< ₹{put_trigger:,.1f})"
+
+        st.markdown(
+            f"<div style='background: linear-gradient(180deg, rgba(239, 68, 68, 0.12) 0%, rgba(17, 24, 39, 0.95) 100%);"
+            f"border: 1px solid rgba(239, 68, 68, 0.4); border-radius: 10px; padding: 14px 16px; margin-bottom: 12px;'>"
+            f"<div style='display:flex; justify-content:space-between; align-items:center;'>"
+            f"<h3 style='margin:0; color:#f87171; font-size:1.15rem;'>📉 PUT STRATEGY (Bearish Setup)</h3>"
+            f"<span style='background:{put_badge_bg}; color:{put_badge_color}; padding:4px 10px; border-radius:12px; font-weight:700; font-size:0.75rem;'>{put_badge_text}</span>"
+            f"</div>"
+            f"<p style='margin:4px 0 0; color:#9ca3af; font-size:0.82rem;'>Optimal Contract for Intraday Downside Momentum</p>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+        if best_pe:
+            pe = best_pe
+            pm1, pm2, pm3 = st.columns(3)
+            pm1.metric("Recommended Strike", f"₹{pe.strike:,.0f} PE")
+            pm2.metric("Option Premium", f"₹{pe.market_price:.2f}")
+            pm3.metric("B-S Model Fair Price", f"₹{pe.model_price:.2f}")
+
+            pt1, pt2, pt3 = st.columns(3)
+            pt1.metric("Entry Trigger (Spot)", f"₹{put_trigger:,.1f}")
+            pt2.metric("Stop Loss (Spot)", f"₹{put_sl:,.1f}", f"+₹{abs(put_sl - spot):.1f} pts", delta_color="inverse")
+            pt3.metric("Target 1 (Spot)", f"₹{put_t1:,.1f}", f"-₹{abs(spot - put_t1):.1f} pts")
+
+            st.caption("⚡ **Option Greeks (PUT)**")
+            pg1, pg2, pg3, pg4, pg5, pg6 = st.columns(6)
+            pg1.metric("Delta (Δ)", f"{pe.delta:.3f}")
+            pg2.metric("Gamma (Γ)", f"{pe.gamma:.5f}")
+            pg3.metric("Theta (Θ)/d", f"₹{pe.theta:.2f}")
+            pg4.metric("Vega (ν)", f"₹{pe.vega:.2f}")
+            pg5.metric("IV", f"{pe.iv_pct:.1f}%")
+            pg6.metric("POP", f"{pe.pop:.0f}%")
+        else:
+            st.warning("No optimal PUT contract found in chain.")
 
     st.divider()
 
-    # ── Greeks panel ─────────────────────────────────────────────────────
-    if best_strike and advice.action != "NO_TRADE":
-        b = best_strike
-        st.subheader("⚡ Option Greeks — Recommended Strike")
-
-        col_d, col_g, col_t, col_v, col_iv, col_pop = st.columns(6)
-        col_d.metric(
-            "Delta (Δ)",
-            f"{b.delta:+.3f}",
-            help="Δ: How much the option premium moves per ₹1 move in NIFTY spot. "
-                 "Target range: 0.30–0.50 for buyers.",
-        )
-        col_g.metric(
-            "Gamma (Γ)",
-            f"{b.gamma:.5f}",
-            help="Γ: Rate of change of Delta. High near ATM — option accelerates as spot moves.",
-        )
-        col_t.metric(
-            "Theta (Θ) /day",
-            f"₹{b.theta:.2f}",
-            help="Θ: Daily time decay cost. Negative for buyers (you lose this ₹ amount every day held).",
-        )
-        col_v.metric(
-            "Vega (ν) /1%IV",
-            f"₹{b.vega:.2f}",
-            help="ν: Premium change per 1% change in Implied Volatility. "
-                 "High vega = sensitive to IV changes.",
-        )
-        col_iv.metric(
-            "IV",
-            f"{b.iv_pct:.1f}%",
-            help="Implied Volatility. Buy when IV is low (cheap premium), "
-                 "avoid when IV > 30% (expensive).",
-        )
-        col_pop.metric(
-            "POP",
-            f"{b.pop:.0f}%",
-            help="Probability of Profit — approximate likelihood the option expires in-the-money. "
-                 "Target: 30–50% for directional buyers.",
-        )
-
-        # Greeks interpretation
-        with st.expander("📖 Greeks interpretation & entry checklist"):
-            iv_verdict  = "✅ Reasonable"  if b.iv_pct <= 20 else ("⚠️ Elevated" if b.iv_pct <= 30 else "❌ Expensive")
-            pop_verdict = "✅ Good"        if 30 <= b.pop <= 55 else ("⚠️ Low" if b.pop < 30 else "⚠️ Deep ITM")
-            del_verdict = "✅ Sweet spot"  if 0.30 <= abs(b.delta) <= 0.50 else ("⚠️ Low leverage" if abs(b.delta) < 0.30 else "⚠️ Costly ITM")
-            tht_verdict = "⚠️ High decay" if abs(b.theta) > 10 else "✅ Acceptable"
+    # ── 4. Greeks Sensitivity & Execution Checklist ─────────────────────
+    if best_ce and best_pe:
+        with st.expander("📖 Greeks Sensitivity & Risk Management Checklist"):
+            ce_decay = abs(best_ce.theta)
+            pe_decay = abs(best_pe.theta)
+            ce_breakeven = ce_decay / max(abs(best_ce.delta), 0.01)
+            pe_breakeven = pe_decay / max(abs(best_pe.delta), 0.01)
 
             st.markdown(f"""
-| Greeks Check | Value | Verdict |
-|---|---|---|
-| Delta (Δ) | {b.delta:+.3f} | {del_verdict} |
-| IV | {b.iv_pct:.1f}% | {iv_verdict} |
-| POP | {b.pop:.0f}% | {pop_verdict} |
-| Theta decay/day | ₹{b.theta:.2f} | {tht_verdict} |
-| Vega exposure | ₹{b.vega:.2f} per 1% IV | — |
-| Gamma | {b.gamma:.5f} | Higher near ATM = faster moves |
+| Metric | 📞 CALL ({best_ce.strike:,.0f} CE) | 📉 PUT ({best_pe.strike:,.0f} PE) | Professional Guidance |
+|---|---|---|---|
+| **Delta (Δ)** | {best_ce.delta:+.3f} | {best_pe.delta:.3f} | Target 0.30–0.50 range for high intraday leverage with controlled risk |
+| **Implied Volatility (IV)** | {best_ce.iv_pct:.1f}% | {best_pe.iv_pct:.1f}% | Cheaper premium when IV < 20%; avoid buying when IV > 30% |
+| **Probability of Profit (POP)** | {best_ce.pop:.0f}% | {best_pe.pop:.0f}% | Estimated statistical odds of finishing in-the-money at expiry |
+| **Theta Decay / Day** | -₹{ce_decay:.2f} | -₹{pe_decay:.2f} | Premium eroded per calendar day held (zero on intraday scalp) |
+| **Vega / 1% IV Move** | ₹{best_ce.vega:.2f} | ₹{best_pe.vega:.2f} | Premium gain if market IV spikes by 1% |
+| **Spot Breakeven Move** | ≥ ₹{ce_breakeven:.0f} pts | ≥ ₹{pe_breakeven:.0f} pts | Daily spot move needed solely to offset Theta time decay |
 
-**Key rules:**
-- Theta ₹{abs(b.theta):.2f}/day → break-even: NIFTY must move **≥ ₹{abs(b.theta)/max(abs(b.delta),0.01):.0f}** per day just to cover decay.
-- If IV rises by 1%, your premium changes by ₹{b.vega:.2f}.
-- If NIFTY moves ₹100, your premium changes by ~₹{abs(b.delta)*100:.0f} (Delta effect) + ₹{b.gamma*100*100/2:.0f} (Gamma bonus).
+**Core Risk Rules:**
+- **Entry Confirmation:** Enter CALL only on sustained 1-min / 3-min close above ₹{call_trigger:,.1f}; enter PUT only on close below ₹{put_trigger:,.1f}.
+- **Invalidation:** Strictly exit if spot hits Stop Loss (₹{call_sl:,.1f} for CALL / ₹{put_sl:,.1f} for PUT).
+- **Target Partial Booking:** Book 50% at Target 1 and trail stop to entry trigger.
 """)
 
-    # ── Full Greeks table ────────────────────────────────────────────────
+    # ── 5. Full Option Chain Greeks Table ────────────────────────────────
     if all_greeks:
-        with st.expander("📋 Full option chain Greeks table"):
-            option_type_filter = "CE" if advice.action == "BUY_CALL" else ("PE" if advice.action == "BUY_PUT" else "CE")
-            filtered = [g for g in all_greeks if g.option_type == option_type_filter]
-            if not filtered:
-                filtered = all_greeks
-
+        with st.expander("📋 Full Option Chain Greeks Table (Live Strikes & Fair Values)"):
             table_rows = []
-            for g in filtered:
-                is_best = best_strike and g.strike == best_strike.strike
-                bg = "background-color: #1a4d1a; font-weight: bold;" if is_best else ""
+            for g in sorted(all_greeks, key=lambda x: (x.strike, 0 if x.option_type == "CE" else 1)):
+                is_best_ce = best_ce and g.strike == best_ce.strike and g.option_type == "CE"
+                is_best_pe = best_pe and g.strike == best_pe.strike and g.option_type == "PE"
+
+                if is_best_ce:
+                    bg = "background-color: #064e3b; font-weight: bold; color: #34d399;"
+                elif is_best_pe:
+                    bg = "background-color: #450a0a; font-weight: bold; color: #f87171;"
+                else:
+                    bg = ""
+
+                type_icon = "📞 CE" if g.option_type == "CE" else "📉 PE"
                 table_rows.append(
-                    f"<tr style='{bg} border-bottom: 1px solid #222;'>"
-                    f"<td style='padding:6px 10px;'>{g.strike:,.0f}</td>"
-                    f"<td style='padding:6px 10px;'>{g.option_type}</td>"
-                    f"<td style='padding:6px 10px;'>₹{g.market_price:.2f}</td>"
+                    f"<tr style='{bg} border-bottom: 1px solid #1f2937;'>"
+                    f"<td style='padding:6px 10px; font-weight:600;'>{g.strike:,.0f}</td>"
+                    f"<td style='padding:6px 10px;'>{type_icon}</td>"
+                    f"<td style='padding:6px 10px; font-weight:600;'>₹{g.market_price:.2f}</td>"
+                    f"<td style='padding:6px 10px;'>₹{g.model_price:.2f}</td>"
                     f"<td style='padding:6px 10px;'>{g.delta:+.3f}</td>"
                     f"<td style='padding:6px 10px;'>{g.gamma:.5f}</td>"
-                    f"<td style='padding:6px 10px; color: #ef4444;'>₹{g.theta:.2f}</td>"
+                    f"<td style='padding:6px 10px; color:#ef4444;'>₹{g.theta:.2f}</td>"
                     f"<td style='padding:6px 10px;'>₹{g.vega:.2f}</td>"
                     f"<td style='padding:6px 10px;'>{g.iv_pct:.1f}%</td>"
-                    f"<td style='padding:6px 10px; color: #10b981;'>{g.pop:.0f}%</td>"
+                    f"<td style='padding:6px 10px; color:#10b981;'>{g.pop:.0f}%</td>"
                     f"<td style='padding:6px 10px;'>{g.moneyness}</td>"
                     f"</tr>"
                 )
+
             table_html = f"""
-            <div style='max-height: 420px; overflow-y: auto; border: 1px solid rgba(255,255,255,0.1); border-radius: 8px;'>
-            <table style='width: 100%; border-collapse: collapse; font-family: monospace; font-size: 0.85rem; text-align: right; background: #111827;'>
-                <thead style='background: #1f2937; position: sticky; top: 0; z-index: 1;'>
+            <div style='max-height: 440px; overflow-y: auto; border: 1px solid rgba(255,255,255,0.1); border-radius: 8px;'>
+            <table style='width: 100%; border-collapse: collapse; font-family: monospace; font-size: 0.85rem; text-align: right; background: #0f172a;'>
+                <thead style='background: #1e293b; position: sticky; top: 0; z-index: 1;'>
                     <tr>
-                        <th style='padding:8px 10px;'>Strike</th><th>Type</th><th>Premium</th><th>Delta</th>
-                        <th>Gamma</th><th>Theta/d</th><th>Vega/1%</th><th>IV</th><th>POP</th><th>Moneyness</th>
+                        <th style='padding:8px 10px;'>Strike</th><th>Type</th><th>Market LTP</th><th>Model Price</th>
+                        <th>Delta</th><th>Gamma</th><th>Theta/d</th><th>Vega/1%</th><th>IV</th><th>POP</th><th>Moneyness</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -465,29 +602,21 @@ def _render_trade_recommendation(
             """
             st.markdown(table_html, unsafe_allow_html=True)
 
-    # ── Option-chain positioning ─────────────────────────────────────────
-    st.subheader("📊 Option-Chain Structure")
-    p, vp, su, re, mp, iv = st.columns(6)
-    p.metric("OI PCR",        _fmt(chain_analysis.put_call_oi_ratio))
-    vp.metric("Volume PCR",   _fmt(chain_analysis.put_call_volume_ratio))
-    su.metric("PE support",   _fmt(chain_analysis.support_strike))
-    re.metric("CE resistance",_fmt(chain_analysis.resistance_strike))
-    mp.metric("Max pain",     _fmt(chain_analysis.max_pain_strike))
-    iv.metric("IV skew (P-C)",_fmt_pct(chain_analysis.implied_volatility_skew))
-
-    # ── Why / Warnings ──────────────────────────────────────────────────
+    # ── 6. Why This Decision & Warnings ─────────────────────────────────
     left, right = st.columns(2)
     with left:
         st.subheader("💡 Why this decision")
         for r in advice.reasoning:
             st.write(f"• {r}")
+        st.write(f"• Trend EMA Status: {tech_indicators['ema_trend']}")
+        st.write(f"• Option Chain Sentiment: {chain_analysis.sentiment} (OI PCR: {_fmt(chain_analysis.put_call_oi_ratio)})")
     with right:
-        st.subheader("⚠️ Warnings")
+        st.subheader("⚠️ Structural Checks")
         if advice.warnings:
             for w in advice.warnings:
                 st.warning(w)
         else:
-            st.success("No structural conflict detected.")
+            st.success("No structural conflict detected. Derivatives walls and price action aligned.")
 
 
 # ---------------------------------------------------------------------------
@@ -553,24 +682,39 @@ def render_live_dashboard() -> None:
     )
 
     # 3. Analysis + Greeks
-    st.subheader("📊 Real-Time Option-Chain Analysis & Trade Signal")
+    st.subheader("📊 Real-Time Option-Chain Analysis & Strategy Engine")
     st.caption(f"Data Source: **{chain_source_label}**")
 
     try:
         chain_analysis = OptionChainAnalyzer().analyze(option_chain, spot)
         regime         = _auto_regime(history, builder)
-        signal, reason = _auto_signal(history)
         atr_pts        = _auto_atr(history)
+        tech_indicators = _compute_technical_indicators(history, spot)
 
-        # Greeks calculation
+        # Greeks calculation across full chain
         calc       = GreeksCalculator(expiry_days=st.session_state["expiry_days"])
         all_greeks = calc.compute_chain_greeks(option_chain, spot)
 
-        # Best strike for the current signal
-        best_strike = calc.select_optimal_strike(all_greeks, signal) if signal != "NO_TRADE" else None
+        # Select optimal strikes for BOTH CALL and PUT
+        best_ce = calc.select_optimal_strike(all_greeks, "BUY_CALL")
+        best_pe = calc.select_optimal_strike(all_greeks, "BUY_PUT")
 
-        # Greeks-enhanced signal validation
-        signal, reason = _greeks_signal_adjustment(signal, reason, best_strike)
+        # Fallback to nearest ATM strikes if delta filter yielded none
+        if best_ce is None:
+            ce_list = [g for g in all_greeks if g.option_type == "CE"]
+            if ce_list:
+                best_ce = min(ce_list, key=lambda g: abs(g.strike - spot))
+        if best_pe is None:
+            pe_list = [g for g in all_greeks if g.option_type == "PE"]
+            if pe_list:
+                best_pe = min(pe_list, key=lambda g: abs(g.strike - spot))
+
+        # Trend-based signal validation
+        signal, reason = _auto_signal(history)
+        if signal == "BUY_CALL" and best_ce:
+            signal, reason = _greeks_signal_adjustment(signal, reason, best_ce)
+        elif signal == "BUY_PUT" and best_pe:
+            signal, reason = _greeks_signal_adjustment(signal, reason, best_pe)
 
         # Final trade advice
         advice = IntradayTradeAdvisor().advise(
@@ -582,8 +726,16 @@ def render_live_dashboard() -> None:
         )
 
         _render_trade_recommendation(
-            signal, reason, advice, chain_analysis,
-            best_strike, all_greeks, regime, chain_source_label, spot,
+            advice=advice,
+            chain_analysis=chain_analysis,
+            best_ce=best_ce,
+            best_pe=best_pe,
+            all_greeks=all_greeks,
+            regime=regime,
+            chain_source_label=chain_source_label,
+            spot=spot,
+            atr_pts=atr_pts,
+            tech_indicators=tech_indicators,
         )
 
     except Exception as exc:
@@ -597,26 +749,56 @@ def main() -> None:
         page_icon="📈",
         layout="wide",
     )
-    # Trading Terminal Styling
+    # Trading Terminal Styling — Complete anti-blur, anti-flicker broker styling
     st.markdown("""
     <style>
         .stApp {
             background-color: #0b0f19;
             color: #f3f4f6;
         }
+
+        /* 1. ELIMINATE STREAMLIT FRAGMENT RE-RENDER BLUR, OPACITY DIMMING & TRANSITIONS */
+        [data-testid="stFragment"],
+        [data-testid="stFragment"] *,
+        [data-testid="stVerticalBlock"],
+        [data-testid="stVerticalBlock"] *,
+        div.element-container,
+        div.stMarkdown,
+        div.stMetric,
+        div[data-testid="stMetricValue"],
+        div[data-testid="stMetricLabel"] {
+            opacity: 1 !important;
+            filter: none !important;
+            -webkit-filter: none !important;
+            transition: none !important;
+            -webkit-transition: none !important;
+            animation: none !important;
+            -webkit-animation: none !important;
+        }
+
+        /* 2. HIDE STREAMLIT RUNNING SPINNER & TOOLBAR TO PREVENT CORNER BLINKING */
+        [data-testid="stStatusWidget"],
+        .stStatusWidget,
+        div[data-testid="stToolbar"],
+        header[data-testid="stHeader"] {
+            display: none !important;
+            visibility: hidden !important;
+            opacity: 0 !important;
+            height: 0 !important;
+            pointer-events: none !important;
+        }
+
+        /* 3. CRISP BROKER TERMINAL METRICS & TYPOGRAPHY */
         div[data-testid="stMetricValue"] {
-            font-family: 'JetBrains Mono', 'Courier New', monospace;
+            font-family: 'JetBrains Mono', 'Roboto Mono', 'SF Pro Display', monospace;
             font-weight: 700;
+            letter-spacing: -0.5px;
         }
         div[data-testid="stMetric"] {
-            background: rgba(17, 24, 39, 0.7);
+            background: rgba(17, 24, 39, 0.85);
             border: 1px solid rgba(255, 255, 255, 0.08);
             border-radius: 8px;
-            padding: 12px;
-            transition: all 0.3s ease;
-        }
-        div[data-testid="stMetric"]:hover {
-            border-color: rgba(59, 130, 246, 0.4);
+            padding: 10px 14px;
         }
     </style>
     """, unsafe_allow_html=True)
