@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import textwrap
 import time
 from datetime import datetime
 from io import BytesIO
@@ -185,7 +186,8 @@ def _auto_regime(history: list[float], builder: CandleBuilder) -> dict:
 def _auto_atr(history: list[float]) -> float:
     if len(history) >= 20:
         w = history[-20:]
-        return max(max(w) - min(w), 10.0)
+        rng = max(w) - min(w)
+        return max(rng, 50.0)  # Standard NIFTY intraday wave floor (50.0 pts)
     return 50.0
 
 
@@ -315,6 +317,15 @@ def _fmt_pct(v: float | None) -> str:
     return "—" if v is None else f"{v:.2f}%"
 
 
+def _render_html(html_str: str) -> None:
+    """Render HTML cleanly into Streamlit without markdown indentation code-block bugs."""
+    clean = textwrap.dedent(html_str).strip()
+    if hasattr(st, "html"):
+        st.html(clean)
+    else:
+        st.markdown(clean, unsafe_allow_html=True)
+
+
 # ---------------------------------------------------------------------------
 # UI render helpers
 # ---------------------------------------------------------------------------
@@ -378,18 +389,21 @@ def _render_trade_recommendation(
     pe_support = chain_analysis.support_strike or (spot - 30.0)
     ce_resist  = chain_analysis.resistance_strike or (spot + 30.0)
 
-    # Breakout level: above resistance wall (or spot + 0.30 ATR)
-    call_trigger = round(max(spot + max(12.0, 0.30 * atr_pts), ce_resist + 15.0), 1)
-    call_sl      = round(spot - 0.65 * atr_pts, 1)
-    call_t1      = round(call_trigger + 1.1 * atr_pts, 1)
-    call_t2      = round(call_trigger + 2.2 * atr_pts, 1)
+    # Standard NIFTY intraday wave is 50-70 points
+    target_wave = max(50.0, float(atr_pts))
+
+    # Breakout level: above resistance wall (or spot + 15 pts)
+    call_trigger = round(max(spot + max(15.0, 0.30 * target_wave), ce_resist + 15.0), 1)
+    call_sl      = round(spot - max(30.0, 0.65 * target_wave), 1)
+    call_t1      = round(call_trigger + target_wave, 1)
+    call_t2      = round(call_trigger + 2.0 * target_wave, 1)
     call_active  = spot >= call_trigger
 
-    # Breakdown level: below support wall (or spot - 0.30 ATR)
-    put_trigger  = round(min(spot - max(12.0, 0.30 * atr_pts), pe_support), 1)
-    put_sl       = round(spot + 0.65 * atr_pts, 1)
-    put_t1       = round(put_trigger - 1.1 * atr_pts, 1)
-    put_t2       = round(put_trigger - 2.2 * atr_pts, 1)
+    # Breakdown level: below support wall (or spot - 15 pts)
+    put_trigger  = round(min(spot - max(15.0, 0.30 * target_wave), pe_support), 1)
+    put_sl       = round(spot + max(30.0, 0.65 * target_wave), 1)
+    put_t1       = round(put_trigger - target_wave, 1)
+    put_t2       = round(put_trigger - 2.0 * target_wave, 1)
     put_active   = spot <= put_trigger
 
     # ── 1. Live Technical & Derivatives Indicators Bar ─────────────────
@@ -575,7 +589,7 @@ def _render_trade_recommendation(
 
     </div>
     """
-    st.markdown(final_output_html, unsafe_allow_html=True)
+    _render_html(final_output_html)
 
     # ── 3. Dual Strategy Matrix (CALL & PUT Side-by-Side) ─────────────
     st.subheader("⚡ Dual Option Strategy Matrix (Pre-Calculated Entry Setups)")
@@ -589,7 +603,7 @@ def _render_trade_recommendation(
         call_badge_color = "#34d399" if call_active else "#d1d5db"
         call_badge_text = "🟢 TRIGGER ACTIVE (IN PLAY)" if call_active else f"⏳ AWAITING BREAKOUT (> ₹{call_trigger:,.1f})"
 
-        st.markdown(
+        _render_html(
             f"<div style='background: linear-gradient(180deg, rgba(16, 185, 129, 0.12) 0%, rgba(17, 24, 39, 0.95) 100%);"
             f"border: 1px solid rgba(16, 185, 129, 0.4); border-radius: 10px; padding: 14px 16px; margin-bottom: 12px;'>"
             f"<div style='display:flex; justify-content:space-between; align-items:center;'>"
@@ -597,8 +611,7 @@ def _render_trade_recommendation(
             f"<span style='background:{call_badge_bg}; color:{call_badge_color}; padding:4px 10px; border-radius:12px; font-weight:700; font-size:0.75rem;'>{call_badge_text}</span>"
             f"</div>"
             f"<p style='margin:4px 0 0; color:#9ca3af; font-size:0.82rem;'>Optimal Contract for Intraday Upside Momentum</p>"
-            f"</div>",
-            unsafe_allow_html=True,
+            f"</div>"
         )
 
         if best_ce:
@@ -630,7 +643,7 @@ def _render_trade_recommendation(
         put_badge_color = "#f87171" if put_active else "#d1d5db"
         put_badge_text = "🔴 TRIGGER ACTIVE (IN PLAY)" if put_active else f"⏳ AWAITING BREAKDOWN (< ₹{put_trigger:,.1f})"
 
-        st.markdown(
+        _render_html(
             f"<div style='background: linear-gradient(180deg, rgba(239, 68, 68, 0.12) 0%, rgba(17, 24, 39, 0.95) 100%);"
             f"border: 1px solid rgba(239, 68, 68, 0.4); border-radius: 10px; padding: 14px 16px; margin-bottom: 12px;'>"
             f"<div style='display:flex; justify-content:space-between; align-items:center;'>"
@@ -638,8 +651,7 @@ def _render_trade_recommendation(
             f"<span style='background:{put_badge_bg}; color:{put_badge_color}; padding:4px 10px; border-radius:12px; font-weight:700; font-size:0.75rem;'>{put_badge_text}</span>"
             f"</div>"
             f"<p style='margin:4px 0 0; color:#9ca3af; font-size:0.82rem;'>Optimal Contract for Intraday Downside Momentum</p>"
-            f"</div>",
-            unsafe_allow_html=True,
+            f"</div>"
         )
 
         if best_pe:
@@ -738,7 +750,7 @@ def _render_trade_recommendation(
             </table>
             </div>
             """
-            st.markdown(table_html, unsafe_allow_html=True)
+            _render_html(table_html)
 
     # ── 6. Why This Decision & Warnings ─────────────────────────────────
     left, right = st.columns(2)
