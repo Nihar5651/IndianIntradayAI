@@ -6,6 +6,11 @@
   * VAL (Value Area Low): Lower boundary of 70% volume distribution
 - Anchored VWAP:
   * Resettable VWAP anchored to opening bell, swing points, or key events
+
+Integrity Rules:
+- Never assigns artificial volume when volume is missing.
+- Returns available=False when volume is absent or zero.
+- Explicitly documents OHLCV-based volume allocation approximation.
 """
 
 from __future__ import annotations
@@ -18,19 +23,23 @@ import pandas as pd
 
 @dataclass
 class VolumeProfileReport:
-    poc: float  # Point of Control
-    vah: float  # Value Area High (70% threshold)
-    val: float  # Value Area Low (70% threshold)
+    available: bool
+    poc: float | None  # Point of Control
+    vah: float | None  # Value Area High (70% threshold)
+    val: float | None  # Value Area Low (70% threshold)
     total_volume: int
     profile_bins: dict[float, int]
+    approximation_method: str
     summary: str
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "poc": round(self.poc, 2),
-            "vah": round(self.vah, 2),
-            "val": round(self.val, 2),
+            "available": self.available,
+            "poc": round(self.poc, 2) if self.poc is not None else None,
+            "vah": round(self.vah, 2) if self.vah is not None else None,
+            "val": round(self.val, 2) if self.val is not None else None,
             "total_volume": self.total_volume,
+            "approximation_method": self.approximation_method,
             "summary": self.summary,
         }
 
@@ -42,48 +51,87 @@ def calculate_volume_profile(
 ) -> VolumeProfileReport:
     """
     Compute Intraday Volume Profile across price distribution.
+    Requires genuine traded volume data; never invents fallback volume.
     """
     required = {"high", "low", "close"}
     if not required.issubset(data.columns) or len(data) == 0:
         return VolumeProfileReport(
-            poc=0.0, vah=0.0, val=0.0, total_volume=0, profile_bins={}, summary="Insufficient data."
+            available=False,
+            poc=None,
+            vah=None,
+            val=None,
+            total_volume=0,
+            profile_bins={},
+            approximation_method="NONE",
+            summary="Insufficient OHLC data for volume profile.",
         )
 
-    has_volume = "volume" in data.columns and data["volume"].sum() > 0
+    # Check for genuine traded volume
+    if "volume" not in data.columns or data["volume"].isna().all() or data["volume"].sum() <= 0:
+        return VolumeProfileReport(
+            available=False,
+            poc=None,
+            vah=None,
+            val=None,
+            total_volume=0,
+            profile_bins={},
+            approximation_method="NONE",
+            summary="Genuine traded volume data unavailable. Volume profile calculation skipped.",
+        )
 
     min_price = float(data["low"].min())
     max_price = float(data["high"].max())
 
     if max_price <= min_price:
         return VolumeProfileReport(
-            poc=min_price, vah=min_price, val=min_price, total_volume=0, profile_bins={}, summary="Flat price range."
+            available=False,
+            poc=None,
+            vah=None,
+            val=None,
+            total_volume=0,
+            profile_bins={},
+            approximation_method="NONE",
+            summary="Flat price range; cannot compute volume profile distribution.",
         )
 
     bin_edges = np.linspace(min_price, max_price, n_bins + 1)
     bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2.0
     vol_bins = np.zeros(n_bins, dtype=float)
 
-    # Accumulate volume across bins
+    # Distribute actual candle volume across bins spanned by [low, high]
     for _, row in data.iterrows():
         b_low = row["low"]
         b_high = row["high"]
-        b_vol = row["volume"] if has_volume else 100.0
+        b_vol = max(0.0, float(row["volume"]))
 
-        # Find which bins overlap with [b_low, b_high]
+        if b_vol <= 0:
+            continue
+
         in_range = (bin_centers >= b_low) & (bin_centers <= b_high)
         count = np.sum(in_range)
         if count > 0:
             vol_bins[in_range] += b_vol / count
         else:
-            # Assign to nearest bin
             nearest = np.argmin(np.abs(bin_centers - row["close"]))
             vol_bins[nearest] += b_vol
 
     total_vol = float(np.sum(vol_bins))
+    if total_vol <= 0:
+        return VolumeProfileReport(
+            available=False,
+            poc=None,
+            vah=None,
+            val=None,
+            total_volume=0,
+            profile_bins={},
+            approximation_method="NONE",
+            summary="Zero total traded volume in dataset.",
+        )
+
     poc_idx = int(np.argmax(vol_bins))
     poc = float(bin_centers[poc_idx])
 
-    # Calculate Value Area (70% of total volume expanding outward from POC)
+    # Value Area (70% of total volume expanding outward from POC)
     target_vol = total_vol * value_area_pct
     accum_vol = vol_bins[poc_idx]
     low_idx = poc_idx
@@ -106,19 +154,21 @@ def calculate_volume_profile(
     val = float(bin_centers[low_idx])
     vah = float(bin_centers[high_idx])
 
-    profile_dict = {round(float(k), 1): int(v) for k, v in zip(bin_centers, vol_bins)}
+    profile_dict = {round(float(k), 1): int(v) for k, v in zip(bin_centers, vol_bins) if v > 0}
 
     summary = (
-        f"Volume Profile: Point of Control (POC) at ₹{poc:,.1f}. "
-        f"Value Area: ₹{val:,.1f} (VAL) to ₹{vah:,.1f} (VAH) representing 70% of traded volume."
+        f"Volume Profile (OHLCV Approximation): POC at ₹{poc:,.1f}. "
+        f"Value Area [₹{val:,.1f} - ₹{vah:,.1f}] contains 70% of volume ({int(total_vol):,} units)."
     )
 
     return VolumeProfileReport(
+        available=True,
         poc=poc,
         vah=vah,
         val=val,
         total_volume=int(total_vol),
         profile_bins=profile_dict,
+        approximation_method="OHLCV_RANGE_ALLOCATION",
         summary=summary,
     )
 
@@ -126,16 +176,20 @@ def calculate_volume_profile(
 def calculate_anchored_vwap(data: pd.DataFrame, anchor_index: int = 0) -> pd.Series:
     """
     Calculate Anchored VWAP starting from `anchor_index` (e.g. session open or breakout point).
+    Requires genuine traded volume; returns Series of NaNs if volume is missing.
     """
     required = {"high", "low", "close"}
     if not required.issubset(data.columns) or len(data) == 0:
         return pd.Series(index=data.index, dtype=float)
 
+    if "volume" not in data.columns or data["volume"].isna().all() or data["volume"].sum() <= 0:
+        return pd.Series(np.nan, index=data.index, dtype=float)
+
     n = len(data)
     anchor_idx = max(0, min(n - 1, anchor_index))
 
     tp = (data["high"] + data["low"] + data["close"]) / 3.0
-    vol = data["volume"] if "volume" in data.columns else pd.Series(100.0, index=data.index)
+    vol = data["volume"]
 
     pv = tp * vol
 

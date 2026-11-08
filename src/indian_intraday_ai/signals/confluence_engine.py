@@ -65,6 +65,7 @@ class TradeSetup:
     risk_points: float
     reward_points: float
     risk_reward_ratio: float
+    setup_type: str = "NO_SETUP"
 
 
 @dataclass
@@ -80,12 +81,14 @@ class ConfluenceDecision:
     volume_profile_poc: float | None = None
     futures_positioning: str | None = None
     breadth_bias: str | None = None
+    setup_type: str = "NO_SETUP"
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "verdict": self.verdict,
             "confluence_score": self.confluence_score,
             "bias": self.bias,
+            "setup_type": self.setup_type,
             "score_breakdown": self.score_breakdown,
             "hard_gates": self.hard_gates,
             "conditions_matrix": [
@@ -111,6 +114,7 @@ class ConfluenceDecision:
                 "risk_points": round(self.trade_setup.risk_points, 1),
                 "reward_points": round(self.trade_setup.reward_points, 1),
                 "risk_reward_ratio": round(self.trade_setup.risk_reward_ratio, 2),
+                "setup_type": self.trade_setup.setup_type,
             } if self.trade_setup else None,
         }
 
@@ -357,10 +361,21 @@ class ConfluenceStrategyEngine:
             vwap=vwap_val,
         )
 
-        gate_fakeout_passed = not breakout_eval.returned_inside_range and not breakout_eval.cooldown_active
+        gate_fakeout_passed = (
+            not breakout_eval.returned_inside_range
+            and not breakout_eval.cooldown_active
+            and breakout_eval.setup_type not in ("FAILED_BREAKOUT", "COOLDOWN")
+        )
+
+        detected_setup = breakout_eval.setup_type
+        if detected_setup == "NO_SETUP":
+            if dominant_bias in ("BULLISH", "BEARISH") and (last_bos or last_choch):
+                detected_setup = "TREND_CONTINUATION"
+            else:
+                detected_setup = "RANGE_CONSOLIDATION"
 
         # =============================================================
-        # LAYER 3: Derivatives & Futures Positioning (Max 20 pts)
+        # LAYER 3: Derivatives, Futures Positioning & Breadth (Max 20 pts)
         # =============================================================
         score_deriv = 0
         deriv_report = self.derivatives_analyzer.analyze(
@@ -377,6 +392,14 @@ class ConfluenceStrategyEngine:
             futures_oi=futures_oi,
         )
 
+        # Market Breadth & Heavyweights
+        breadth_rep = self.breadth_engine.analyze(
+            constituents_data=constituents_data,
+            heavyweights_data=heavyweights_data,
+            index_direction=dominant_bias,
+        )
+
+        # 1. Derivatives (OI PCR & Max Pain) - Up to 12 pts
         pcr_str = "Unavailable"
         if deriv_report.available and deriv_report.pcr_oi is not None:
             pcr = deriv_report.pcr_oi
@@ -384,36 +407,41 @@ class ConfluenceStrategyEngine:
 
             if dominant_bias == "BULLISH":
                 if pcr >= 1.15:
-                    score_deriv += 10
+                    score_deriv += 8
                 elif pcr >= 0.95:
-                    score_deriv += 7
+                    score_deriv += 5
                 elif pcr < 0.80:
-                    score_deriv += 2
+                    score_deriv += 0
+                else:
+                    score_deriv += 3
             elif dominant_bias == "BEARISH":
                 if pcr <= 0.85:
-                    score_deriv += 10
+                    score_deriv += 8
                 elif pcr <= 1.05:
-                    score_deriv += 7
+                    score_deriv += 5
                 elif pcr > 1.20:
-                    score_deriv += 2
-            else:
-                score_deriv += 5
-
-            # Max Pain & Strike walls context (6 pts)
-            if deriv_report.max_pain:
-                if dominant_bias == "BULLISH" and spot >= deriv_report.max_pain:
-                    score_deriv += 6
-                elif dominant_bias == "BEARISH" and spot <= deriv_report.max_pain:
-                    score_deriv += 6
+                    score_deriv += 0
                 else:
                     score_deriv += 3
             else:
                 score_deriv += 3
-        else:
-            score_deriv = 8
-            pcr_str = "Derivatives feed not connected (Neutral baseline)"
 
-        # Futures Buildup Points (4 pts)
+            # Max Pain & Strike walls context (4 pts)
+            if deriv_report.max_pain:
+                if dominant_bias == "BULLISH" and spot >= deriv_report.max_pain:
+                    score_deriv += 4
+                elif dominant_bias == "BEARISH" and spot <= deriv_report.max_pain:
+                    score_deriv += 4
+                else:
+                    score_deriv += 2
+            else:
+                score_deriv += 2
+        else:
+            # Zero fabrication: award 0 points when derivatives feed is absent
+            score_deriv += 0
+            pcr_str = "Derivatives feed unavailable (0 pts awarded)"
+
+        # 2. Futures Buildup Points - Up to 4 pts
         futures_pos_str = futures_report.positioning
         if futures_report.available:
             if dominant_bias == "BULLISH" and futures_report.positioning in ("LONG_BUILDUP", "SHORT_COVERING"):
@@ -422,15 +450,22 @@ class ConfluenceStrategyEngine:
                 score_deriv += 4
             elif futures_report.positioning == "NEUTRAL":
                 score_deriv += 2
+            else:
+                score_deriv += 0
+
+        # 3. Market Breadth & Heavyweights Points - Up to 4 pts
+        breadth_bias_str = breadth_rep.breadth_bias
+        if breadth_rep.available:
+            if dominant_bias == "BULLISH" and breadth_rep.breadth_bias == "BULLISH":
+                score_deriv += 4
+            elif dominant_bias == "BEARISH" and breadth_rep.breadth_bias == "BEARISH":
+                score_deriv += 4
+            elif breadth_rep.breadth_bias == "NEUTRAL":
+                score_deriv += 2
+            else:
+                score_deriv += 0
 
         score_deriv = min(20, score_deriv)
-
-        # Market Breadth & Heavyweights
-        breadth_rep = self.breadth_engine.analyze(
-            constituents_data=constituents_data,
-            heavyweights_data=heavyweights_data,
-            index_direction=dominant_bias,
-        )
 
         # =============================================================
         # LAYER 4: Volume, Volume Profile & Volatility (Max 20 pts)
@@ -516,9 +551,19 @@ class ConfluenceStrategyEngine:
             raw_sl = min(spot - (0.8 * atr_val), nearest_supp)
             stop_loss = max(raw_sl, spot - 50.0)
             risk_pts = max(12.0, entry_trigger - stop_loss)
-            t1 = entry_trigger + (1.5 * risk_pts)
-            t2 = entry_trigger + (2.5 * risk_pts)
-            reward_pts = t2 - entry_trigger
+
+            overhead_res = [z for z in sr_report.resistance_zones if z.mid_price > entry_trigger + 5.0]
+            if overhead_res:
+                t1 = max(entry_trigger + 5.0, overhead_res[0].price_low)
+                if len(overhead_res) >= 2:
+                    t2 = max(t1 + 5.0, overhead_res[1].mid_price)
+                else:
+                    t2 = max(overhead_res[0].price_high + (0.5 * atr_val), entry_trigger + (2.0 * risk_pts))
+            else:
+                t1 = entry_trigger + (1.5 * risk_pts)
+                t2 = entry_trigger + (2.5 * risk_pts)
+
+            reward_pts = max(0.0, t2 - entry_trigger)
         else:
             contract_type = "PE"
             strike = round(spot / self.strike_interval) * self.strike_interval
@@ -526,9 +571,19 @@ class ConfluenceStrategyEngine:
             raw_sl = max(spot + (0.8 * atr_val), nearest_res)
             stop_loss = min(raw_sl, spot + 50.0)
             risk_pts = max(12.0, stop_loss - entry_trigger)
-            t1 = entry_trigger - (1.5 * risk_pts)
-            t2 = entry_trigger - (2.5 * risk_pts)
-            reward_pts = entry_trigger - t2
+
+            underfoot_supp = [z for z in sr_report.support_zones if z.mid_price < entry_trigger - 5.0]
+            if underfoot_supp:
+                t1 = min(entry_trigger - 5.0, underfoot_supp[0].price_high)
+                if len(underfoot_supp) >= 2:
+                    t2 = min(t1 - 5.0, underfoot_supp[1].mid_price)
+                else:
+                    t2 = min(underfoot_supp[0].price_low - (0.5 * atr_val), entry_trigger - (2.0 * risk_pts))
+            else:
+                t1 = entry_trigger - (1.5 * risk_pts)
+                t2 = entry_trigger - (2.5 * risk_pts)
+
+            reward_pts = max(0.0, entry_trigger - t2)
 
         rr_ratio = reward_pts / risk_pts if risk_pts > 0 else 0.0
         rr_str = f"1 : {rr_ratio:.1f}"
@@ -592,6 +647,7 @@ class ConfluenceStrategyEngine:
             risk_points=risk_pts,
             reward_points=reward_pts,
             risk_reward_ratio=rr_ratio,
+            setup_type=detected_setup,
         )
 
         if total_score >= self.min_entry_score and all_gates_passed:
@@ -638,16 +694,22 @@ class ConfluenceStrategyEngine:
 
             explanation = f"HOLD (Score: {total_score}/100): " + " ".join(reasons) + " Capital preservation enforced."
 
+        theta_txt = (
+            f"{option_sens_report.theta_bleed_per_hour:.1f} pts/hr"
+            if option_sens_report.theta_bleed_per_hour is not None
+            else "N/A"
+        )
+
         # Conditions Matrix
         conditions = [
             ConditionItem("15m Trend", c_15m_str, "CONFIRMED" if c_15m_str == dominant_bias else ("SUPPORTIVE" if c_15m_str != "SIDEWAYS" else "INSUFFICIENT")),
             ConditionItem("5m Trend", c_5m_str, "CONFIRMED" if c_5m_str == dominant_bias else "CONFLICTING"),
             ConditionItem("Intraday VWAP", vwap_status_str, "CONFIRMED" if ("Above" in vwap_status_str and dominant_bias == "BULLISH") or ("Below" in vwap_status_str and dominant_bias == "BEARISH") else "CONFLICTING"),
             ConditionItem("Market Structure", bos_str, "CONFIRMED" if "BOS" in bos_str or "CHoCH" in bos_str else "INSUFFICIENT"),
-            ConditionItem("Fakeout Detector", "Verified Clean" if gate_fakeout_passed else breakout_eval.breakout_type, "CONFIRMED" if gate_fakeout_passed else "CONFLICTING"),
+            ConditionItem("Fakeout Detector", f"Verified Clean ({detected_setup})" if gate_fakeout_passed else breakout_eval.breakout_type, "CONFIRMED" if gate_fakeout_passed else "CONFLICTING"),
             ConditionItem("Derivatives & Futures", f"{pcr_str} | Futures: {futures_pos_str}", "SUPPORTIVE" if deriv_report.confirms_spot else "CONFLICTING"),
             ConditionItem("Volume & Profile", f"{rvol_str} | {vp_str}", "CONFIRMED" if rvol >= 1.2 else "SUPPORTIVE"),
-            ConditionItem("Option & Risk Quality", f"{rr_str} (Risk: {risk_pts:.1f} pts) | Theta: {option_sens_report.theta_bleed_per_hour:.1f} pts/hr", "CONFIRMED" if (gate_reward_risk and gate_execution) else "CONFLICTING"),
+            ConditionItem("Option & Risk Quality", f"{rr_str} (Risk: {risk_pts:.1f} pts) | Theta: {theta_txt}", "CONFIRMED" if (gate_reward_risk and gate_execution) else "CONFLICTING"),
         ]
 
         return ConfluenceDecision(
@@ -668,4 +730,5 @@ class ConfluenceStrategyEngine:
             volume_profile_poc=vp_report.poc,
             futures_positioning=futures_pos_str,
             breadth_bias=breadth_rep.breadth_bias,
+            setup_type=detected_setup,
         )

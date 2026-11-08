@@ -7,6 +7,7 @@ from indian_intraday_ai.config.settings import settings
 from indian_intraday_ai.options.risk_manager import (
     OptionRiskManager,
 )
+from indian_intraday_ai.execution.trade_plan import TradePlan
 
 
 @dataclass
@@ -27,6 +28,12 @@ class PaperPosition:
     exit_time: Optional[datetime] = None
     status: str = "OPEN"
     pnl: float = 0.0
+
+    # Underlying index tracking & invalidation
+    underlying_entry: Optional[float] = None
+    underlying_stop_loss: Optional[float] = None
+    underlying_target: Optional[float] = None
+    trade_plan: Optional[TradePlan] = None
 
     @property
     def unrealized_pnl(self) -> float:
@@ -110,6 +117,10 @@ class PaperTrader:
         stop_loss: Optional[float] = None,
         target_price: Optional[float] = None,
         entry_time: Optional[datetime] = None,
+        underlying_entry: Optional[float] = None,
+        underlying_stop_loss: Optional[float] = None,
+        underlying_target: Optional[float] = None,
+        trade_plan: Optional[TradePlan] = None,
     ) -> PaperPosition:
 
         if entry_time is None:
@@ -135,18 +146,16 @@ class PaperTrader:
         if entry_price <= 0:
             raise ValueError("Entry price must be positive.")
 
-        # Create the default premium-based risk plan.
-        risk_plan = self.risk_manager.create_plan(
-            entry_price=entry_price,
-            quantity=quantity,
-        )
-
-        # Allow custom levels only when both are supplied.
-        if stop_loss is None:
-            stop_loss = risk_plan.stop_loss
-
-        if target_price is None:
-            target_price = risk_plan.target_price
+        # Allow custom levels only when both are supplied; otherwise use default risk plan.
+        if stop_loss is None or target_price is None:
+            risk_plan = self.risk_manager.create_plan(
+                entry_price=entry_price,
+                quantity=quantity,
+            )
+            if stop_loss is None:
+                stop_loss = risk_plan.stop_loss
+            if target_price is None:
+                target_price = risk_plan.target_price
 
         if not 0 < stop_loss < entry_price < target_price:
             raise ValueError(
@@ -175,6 +184,10 @@ class PaperTrader:
             entry_time=entry_time,
             current_price=entry_price,
             highest_price=entry_price,
+            underlying_entry=underlying_entry,
+            underlying_stop_loss=underlying_stop_loss,
+            underlying_target=underlying_target,
+            trade_plan=trade_plan,
         )
 
         self.positions.append(position)
@@ -182,6 +195,63 @@ class PaperTrader:
         self.trades_today += 1
 
         return position
+
+    def open_trade_from_plan(
+        self,
+        plan: TradePlan,
+        entry_time: Optional[datetime] = None,
+    ) -> PaperPosition:
+        """Open a position directly from a validated TradePlan."""
+        if not plan.is_viable:
+            raise ValueError(f"TradePlan rejected: {plan.rejection_reason}")
+
+        return self.open_trade(
+            symbol=plan.contract_symbol,
+            option_type=plan.option_type,
+            quantity=plan.quantity,
+            entry_price=plan.option_entry_price,
+            stop_loss=plan.option_stop_loss,
+            target_price=plan.option_target_price,
+            entry_time=entry_time,
+            underlying_entry=plan.underlying_entry,
+            underlying_stop_loss=plan.underlying_stop_loss,
+            underlying_target=plan.underlying_target_2,
+            trade_plan=plan,
+        )
+
+    def update_underlying_price(
+        self,
+        underlying_spot: float,
+        current_option_price: float,
+        timestamp: datetime,
+    ) -> Optional[PaperPosition]:
+        """Monitors structural invalidation on the underlying index.
+
+        If the underlying NIFTY crosses the structural stop-loss (even before the option
+        premium reaches its stop-loss), the position is invalidated and closed.
+        """
+        if self.open_position is None:
+            return None
+
+        if underlying_spot <= 0 or current_option_price <= 0:
+            raise ValueError("Prices must be positive.")
+
+        pos = self.open_position
+        if pos.underlying_stop_loss is not None:
+            if pos.option_type == "CE" and underlying_spot <= pos.underlying_stop_loss:
+                return self.close_trade(
+                    current_option_price,
+                    timestamp,
+                    "UNDERLYING_INVALIDATION",
+                )
+            elif pos.option_type == "PE" and underlying_spot >= pos.underlying_stop_loss:
+                return self.close_trade(
+                    current_option_price,
+                    timestamp,
+                    "UNDERLYING_INVALIDATION",
+                )
+
+        return None
 
     def update_price(
         self,

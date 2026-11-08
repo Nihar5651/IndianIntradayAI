@@ -119,3 +119,38 @@ class LiveContractSelector:
             estimated_spread_pts=0.60,
             theta_risk_level=theta_risk,
         )
+
+    def create_trade_plan(
+        self,
+        signal: str,
+        spot_price: float,
+        underlying_sl: float,
+        underlying_t1: float,
+        underlying_t2: float,
+        max_risk_allowed: float = 100.0,
+        lot_size: int = 25,
+        dte: Optional[int] = None,
+        setup_type: str = "NO_SETUP",
+        enforce_lot_size: bool = True,
+    ):
+        """Create a validated TradePlan enforcing the ₹100 max risk limit on 1 exchange lot."""
+        from indian_intraday_ai.execution.trade_plan import build_trade_plan
+
+        contract = self.select_contract(signal=signal, spot_price=spot_price, dte=dte)
+        return build_trade_plan(
+            underlying_symbol="NIFTY",
+            underlying_spot=spot_price,
+            underlying_entry=spot_price,
+            underlying_stop_loss=underlying_sl,
+            underlying_target_1=underlying_t1,
+            underlying_target_2=underlying_t2,
+            contract_symbol=contract.symbol,
+            option_type=contract.option_type,
+            strike_price=contract.strike_price,
+            option_entry_price=contract.estimated_premium,
+            lot_size=lot_size,
+            max_risk_allowed=max_risk_allowed,
+            estimated_delta=contract.estimated_delta,
+            enforce_lot_size=enforce_lot_size,
+            setup_type=setup_type,
+        )

@@ -1,12 +1,15 @@
 """NIFTY Futures Positioning and Buildup Intelligence Engine.
 
-Classifies institutional derivative commitments:
-- Price Rising + OI Rising   -> LONG_BUILDUP (Strong Bullish)
-- Price Falling + OI Rising  -> SHORT_BUILDUP (Strong Bearish)
-- Price Rising + OI Falling  -> SHORT_COVERING (Corrective Bullish / Short Squeeze)
-- Price Falling + OI Falling -> LONG_UNWINDING (Corrective Bearish / Long Liquidation)
+Classifies derivative positioning:
+- Price Rising + OI Rising   -> LONG_BUILDUP (Bullish accumulation)
+- Price Falling + OI Rising  -> SHORT_BUILDUP (Bearish accumulation)
+- Price Rising + OI Falling  -> SHORT_COVERING (Corrective short squeeze)
+- Price Falling + OI Falling -> LONG_UNWINDING (Corrective long liquidation)
 
-Monitors Futures Basis (Futures Price - Spot Price = Premium/Discount).
+Integrity Rules:
+- Never substitutes futures basis for price change.
+- Requires genuine previous price & OI observations; returns UNKNOWN if prior data is missing.
+- Basis (Futures - Spot) is reported independently as contextual premium/discount.
 """
 
 from __future__ import annotations
@@ -27,7 +30,7 @@ class FuturesPositioningReport:
     futures_oi: int | None
     oi_change_pct: float | None
     price_change_pct: float | None
-    conviction_score: float  # -1.0 (Extreme Bearish) to +1.0 (Extreme Bullish)
+    conviction_score: float  # -1.0 (Bearish) to +1.0 (Bullish), 0.0 if unknown
     summary: str
 
     def to_dict(self) -> dict[str, Any]:
@@ -48,7 +51,7 @@ class FuturesPositioningReport:
 
 
 class FuturesPositioningEngine:
-    """Evaluates NIFTY futures price and Open Interest dynamics."""
+    """Evaluates NIFTY futures price and Open Interest dynamics strictly from valid observations."""
 
     def analyze(
         self,
@@ -71,53 +74,74 @@ class FuturesPositioningEngine:
                 oi_change_pct=None,
                 price_change_pct=None,
                 conviction_score=0.0,
-                summary="Futures contract feed not connected; spot analysis operating autonomously.",
+                summary="Futures contract feed not connected; futures positioning UNKNOWN.",
             )
 
         basis_pts = futures_price - spot_price
         basis_pct = (basis_pts / spot_price) * 100.0
 
-        # Calculate price delta & OI delta if previous observation exists
-        if prev_futures_price is not None and prev_futures_price > 0 and prev_futures_oi is not None and prev_futures_oi > 0 and futures_oi is not None:
-            price_change_pct = ((futures_price - prev_futures_price) / prev_futures_price) * 100.0
-            oi_change_pct = ((futures_oi - prev_futures_oi) / prev_futures_oi) * 100.0
-        else:
-            price_change_pct = basis_pct
-            oi_change_pct = 0.0
+        # Check whether valid previous observation exists for Buildup calculation
+        has_previous = (
+            prev_futures_price is not None
+            and prev_futures_price > 0
+            and prev_futures_oi is not None
+            and prev_futures_oi > 0
+            and futures_oi is not None
+            and futures_oi > 0
+        )
 
-        # Positioning Interpretation Matrix
-        price_up = price_change_pct > 0.05
-        price_down = price_change_pct < -0.05
-        oi_up = oi_change_pct > 0.5
-        oi_down = oi_change_pct < -0.5
+        if not has_previous:
+            # Contextual basis only; Buildup state is UNKNOWN
+            return FuturesPositioningReport(
+                available=True,
+                positioning="UNKNOWN",
+                bias="UNKNOWN",
+                futures_price=futures_price,
+                spot_price=spot_price,
+                basis_points=basis_pts,
+                basis_percentage=basis_pct,
+                futures_oi=futures_oi,
+                oi_change_pct=None,
+                price_change_pct=None,
+                conviction_score=0.0,
+                summary=f"Futures basis is {basis_pts:+.1f} pts ({basis_pct:+.2f}%). Prior OI observation missing; buildup UNKNOWN.",
+            )
+
+        price_change_pct = ((futures_price - prev_futures_price) / prev_futures_price) * 100.0
+        oi_change_pct = ((futures_oi - prev_futures_oi) / prev_futures_oi) * 100.0
+
+        price_up = price_change_pct > 0.04
+        price_down = price_change_pct < -0.04
+        oi_up = oi_change_pct > 0.25
+        oi_down = oi_change_pct < -0.25
 
         if price_up and oi_up:
             positioning = "LONG_BUILDUP"
             bias = "BULLISH"
             conviction = 0.85
-            desc = "Institutional buyers adding aggressive fresh long positions with expanding Open Interest."
+            desc = f"Price (+{price_change_pct:.2f}%) and OI (+{oi_change_pct:.2f}%) rising: Institutional Long Buildup."
         elif price_down and oi_up:
             positioning = "SHORT_BUILDUP"
             bias = "BEARISH"
             conviction = -0.85
-            desc = "Institutional sellers initiating aggressive short positions with expanding Open Interest."
+            desc = f"Price ({price_change_pct:.2f}%) falling with expanding OI (+{oi_change_pct:.2f}%): Institutional Short Buildup."
         elif price_up and oi_down:
             positioning = "SHORT_COVERING"
             bias = "BULLISH"
-            conviction = 0.50
-            desc = "Price rising primarily driven by bear short-covering rather than aggressive fresh accumulation."
+            conviction = 0.45
+            desc = f"Price rising (+{price_change_pct:.2f}%) on declining OI ({oi_change_pct:.2f}%): Short Covering rally."
         elif price_down and oi_down:
             positioning = "LONG_UNWINDING"
             bias = "BEARISH"
-            conviction = -0.50
-            desc = "Price dropping primarily driven by long liquidation rather than fresh short creation."
+            conviction = -0.45
+            desc = f"Price falling ({price_change_pct:.2f}%) on declining OI ({oi_change_pct:.2f}%): Long Unwinding decline."
         else:
             positioning = "NEUTRAL"
             bias = "BULLISH" if basis_pts > 15.0 else ("BEARISH" if basis_pts < -15.0 else "NEUTRAL")
-            conviction = 0.20 if basis_pts > 0 else -0.20
-            desc = f"Futures trading at {basis_pts:+.1f} pts basis ({'Premium' if basis_pts >= 0 else 'Discount'})."
+            conviction = 0.15 if basis_pts > 0 else -0.15
+            desc = f"Futures price/OI changes within neutral threshold (Basis: {basis_pts:+.1f} pts)."
 
-        summary = f"Futures: {positioning} ({bias}, Basis: {basis_pts:+.1f} pts / {basis_pct:+.2f}%). {desc}"
+        summary = f"Futures Positioning: {positioning} ({bias}, Basis: {basis_pts:+.1f} pts). {desc}"
 
         return FuturesPositioningReport(
             available=True,

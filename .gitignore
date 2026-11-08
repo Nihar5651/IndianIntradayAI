@@ -4,9 +4,13 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .env
-logs/*.log
+logs/
+*.zip
+PROJECT_INSPECTION.txt
+SOURCE_CODE_REVIEW.txt
 data/raw/*
 data/processed/*
+*.db
 .idea/
 .vscode/
 
