@@ -408,16 +408,35 @@ def _render_trade_recommendation(
     st.subheader("🎯 Official Final AI Output & Action Decision")
 
     pcr_val = chain_analysis.put_call_oi_ratio or 0.0
-    sentiment_str = chain_analysis.sentiment
+    sentiment_str = (chain_analysis.sentiment or "NEUTRAL").upper()
 
-    if call_active and chain_analysis.sentiment != "BEARISH":
+    # Dynamic badge titles matching actual derivative bias
+    if sentiment_str == "BULLISH":
+        ce_badge_title = "🟢 PRIMARY SETUP: BUY CALL"
+        ce_badge_tag   = "HIGH PROBABILITY"
+        pe_badge_title = "🔴 CONTINGENCY SETUP: BUY PUT"
+        pe_badge_tag   = "PULLBACK WATCH"
+    elif sentiment_str == "BEARISH":
+        ce_badge_title = "🟢 CONTINGENCY: BUY CALL"
+        ce_badge_tag   = "SQUEEZE ONLY"
+        pe_badge_title = "🔴 PRIMARY SETUP: BUY PUT"
+        pe_badge_tag   = "HIGH PROBABILITY"
+    else:  # NEUTRAL
+        ce_badge_title = "🟢 BULLISH SETUP: BUY CALL"
+        ce_badge_tag   = "BREAKOUT WATCH"
+        pe_badge_title = "🔴 BEARISH SETUP: BUY PUT"
+        pe_badge_tag   = "BREAKDOWN WATCH"
+
+    channel_pts = max(10.0, round(call_trigger - put_trigger))
+
+    if call_active and sentiment_str != "BEARISH":
         verdict_badge = "🟢 ACTIVE TRIGGERED"
         verdict_color = "#34d399"
         verdict_title = "BUY CALL (BULLISH BREAKOUT)"
         verdict_desc = f"NIFTY spot (₹{spot:,.2f}) has crossed above breakout trigger ₹{call_trigger:,.1f}. Momentum is BULLISH."
         hero_border = "#10b981"
         hero_glow = "rgba(16, 185, 129, 0.3)"
-    elif put_active and chain_analysis.sentiment != "BULLISH":
+    elif put_active and sentiment_str != "BULLISH":
         verdict_badge = "🔴 ACTIVE TRIGGERED"
         verdict_color = "#f87171"
         verdict_title = "BUY PUT (BEARISH BREAKDOWN)"
@@ -429,8 +448,8 @@ def _render_trade_recommendation(
         verdict_color = "#38bdf8"
         verdict_title = "HOLD (AWAIT OPENING BREAKOUT)"
         verdict_desc = (
-            f"Spot (₹{spot:,.2f}) is in a 50-pt consolidation channel (₹{put_trigger:,.1f} – ₹{call_trigger:,.1f}). "
-            f"Overall Derivatives Bias is <strong>BEARISH (OI PCR: {pcr_val:.2f})</strong>. Pre-set orders are armed below."
+            f"Spot (₹{spot:,.2f}) is in a {channel_pts:,.0f}-pt consolidation channel (₹{put_trigger:,.1f} – ₹{call_trigger:,.1f}). "
+            f"Overall Derivatives Bias is <strong>{sentiment_str} (OI PCR: {pcr_val:.2f})</strong>. Pre-set breakout orders are armed below."
         )
         hero_border = "#6366f1"
         hero_glow = "rgba(99, 102, 241, 0.25)"
@@ -439,6 +458,23 @@ def _render_trade_recommendation(
     pe_name = f"NIFTY {best_pe.strike:,.0f} PE" if best_pe else "ATM PE"
     ce_price = f"₹{best_ce.market_price:.2f}" if best_ce else "—"
     pe_price = f"₹{best_pe.market_price:.2f}" if best_pe else "—"
+
+    # Dynamic target premium calculation from Delta
+    if best_pe and best_pe.market_price > 0:
+        pe_delta_mag = max(0.25, abs(best_pe.delta))
+        pe_gain_t1   = abs(put_trigger - put_t1) * pe_delta_mag
+        pe_t1_prem   = round(best_pe.market_price + pe_gain_t1, 2)
+        pe_target_str = f"Target 1 Option: ~₹{pe_t1_prem:.2f} (+₹{pe_gain_t1:.1f})"
+    else:
+        pe_target_str = f"Target 1: Spot -{abs(put_trigger - put_t1):.0f} pts"
+
+    if best_ce and best_ce.market_price > 0:
+        ce_delta_mag = max(0.25, abs(best_ce.delta))
+        ce_gain_t1   = abs(call_t1 - call_trigger) * ce_delta_mag
+        ce_t1_prem   = round(best_ce.market_price + ce_gain_t1, 2)
+        ce_target_str = f"Target 1 Option: ~₹{ce_t1_prem:.2f} (+₹{ce_gain_t1:.1f})"
+    else:
+        ce_target_str = f"Target 1: Spot +{abs(call_t1 - call_trigger):.0f} pts"
 
     final_output_html = f"""
     <div style='background: linear-gradient(135deg, #090d16 0%, #151c2e 50%, #090d16 100%);
@@ -469,11 +505,11 @@ def _render_trade_recommendation(
 
         <div style='display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px;'>
             
-            <!-- PRIMARY PUT SETUP -->
+            <!-- PUT SETUP -->
             <div style='background: rgba(239, 68, 68, 0.08); border: 1.5px solid rgba(239, 68, 68, 0.5); border-radius: 10px; padding: 16px;'>
                 <div style='display:flex; justify-content:space-between; align-items:center;'>
-                    <span style='color:#f87171; font-weight:800; font-size:1rem; letter-spacing:0.5px;'>🔴 PRIMARY SETUP: BUY PUT</span>
-                    <span style='background:#7f1d1d; color:#fca5a5; padding:2px 8px; border-radius:10px; font-size:0.75rem; font-weight:700;'>HIGH PROBABILITY</span>
+                    <span style='color:#f87171; font-weight:800; font-size:1rem; letter-spacing:0.5px;'>{pe_badge_title}</span>
+                    <span style='background:#7f1d1d; color:#fca5a5; padding:2px 8px; border-radius:10px; font-size:0.75rem; font-weight:700;'>{pe_badge_tag}</span>
                 </div>
                 <div style='margin-top:8px;'>
                     <div style='color:#9ca3af; font-size:0.8rem;'>CONTRACT:</div>
@@ -497,14 +533,14 @@ def _render_trade_recommendation(
                         <div style='color:#34d399; font-size:1.15rem; font-weight:800;'>₹{put_t2:,.1f}</div>
                     </div>
                 </div>
-                <div style='margin-top:10px; color:#9ca3af; font-size:0.8rem;'>Risk:Reward: <strong style='color:#ffffff;'>1 : 2.5+</strong> &nbsp;|&nbsp; Target 1 Option: ~₹65.00</div>
+                <div style='margin-top:10px; color:#9ca3af; font-size:0.8rem;'>Risk:Reward: <strong style='color:#ffffff;'>1 : 2.5+</strong> &nbsp;|&nbsp; {pe_target_str}</div>
             </div>
 
-            <!-- CONTINGENCY CALL SETUP -->
+            <!-- CALL SETUP -->
             <div style='background: rgba(16, 185, 129, 0.08); border: 1.5px solid rgba(16, 185, 129, 0.5); border-radius: 10px; padding: 16px;'>
                 <div style='display:flex; justify-content:space-between; align-items:center;'>
-                    <span style='color:#34d399; font-weight:800; font-size:1rem; letter-spacing:0.5px;'>🟢 CONTINGENCY: BUY CALL</span>
-                    <span style='background:#065f46; color:#a7f3d0; padding:2px 8px; border-radius:10px; font-size:0.75rem; font-weight:700;'>SQUEEZE ONLY</span>
+                    <span style='color:#34d399; font-weight:800; font-size:1rem; letter-spacing:0.5px;'>{ce_badge_title}</span>
+                    <span style='background:#065f46; color:#a7f3d0; padding:2px 8px; border-radius:10px; font-size:0.75rem; font-weight:700;'>{ce_badge_tag}</span>
                 </div>
                 <div style='margin-top:8px;'>
                     <div style='color:#9ca3af; font-size:0.8rem;'>CONTRACT:</div>
@@ -528,7 +564,7 @@ def _render_trade_recommendation(
                         <div style='color:#34d399; font-size:1.15rem; font-weight:800;'>₹{call_t2:,.1f}</div>
                     </div>
                 </div>
-                <div style='margin-top:10px; color:#9ca3af; font-size:0.8rem;'>Risk:Reward: <strong style='color:#ffffff;'>1 : 2.0+</strong> &nbsp;|&nbsp; Target 1 Option: Spot +55 pts</div>
+                <div style='margin-top:10px; color:#9ca3af; font-size:0.8rem;'>Risk:Reward: <strong style='color:#ffffff;'>1 : 2.0+</strong> &nbsp;|&nbsp; {ce_target_str}</div>
             </div>
 
         </div>
