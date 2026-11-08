@@ -34,6 +34,7 @@ from indian_intraday_ai.market_analysis.option_chain import OptionChainAnalyzer 
 from indian_intraday_ai.market_analysis.trade_advisor import IntradayTradeAdvisor            # noqa: E402
 from indian_intraday_ai.market_analysis.regime_detector import MarketRegimeDetector          # noqa: E402
 from indian_intraday_ai.options.greeks_calculator import GreeksCalculator, OptionGreeks      # noqa: E402
+from indian_intraday_ai.market_data.option_chain_service import OptionChainService           # noqa: E402
 from indian_intraday_ai.broker.smartapi_market_data import SmartApiCredentials, SmartApiMarketData  # noqa: E402
 
 log = logging.getLogger(__name__)
@@ -294,7 +295,7 @@ def _render_trade_recommendation(
     best_strike: OptionGreeks | None,
     all_greeks: list[OptionGreeks],
     regime: dict,
-    is_demo_chain: bool,
+    chain_source_label: str,
     spot: float,
 ) -> None:
     action_icon = ACTION_ICONS.get(advice.action, "❓")
@@ -320,8 +321,7 @@ def _render_trade_recommendation(
     # ── Recommended contract ────────────────────────────────────────────
     if best_strike and advice.action != "NO_TRADE":
         st.subheader("🎯 Recommended Contract")
-        if is_demo_chain:
-            st.caption("⚠️ Using synthetic option data — real option prices may differ.")
+        st.caption(f"Data source: **{chain_source_label}**")
 
         b = best_strike
         c1, c2, c3, c4, c5, c6 = st.columns(6)
@@ -535,13 +535,7 @@ def main() -> None:
         st.caption("Affects Theta, Gamma and POP calculations.")
 
         st.divider()
-        st.caption("All signals auto-generated. No orders placed.")
-
-        with st.expander("Upload option-chain CSV (optional)"):
-            uploaded_file = st.file_uploader(
-                "CSV with: strike_price, option_type, open_interest, volume, last_price",
-                type="csv", label_visibility="collapsed",
-            )
+        st.caption("All signals auto-generated from live market data.")
 
     # ------------------------------------------------------------------
     # Status / candle / quality panels
@@ -554,33 +548,30 @@ def main() -> None:
     st.divider()
 
     # ------------------------------------------------------------------
-    # Option chain
+    # Real Option Chain (Live SmartAPI or Real Settlement FO Bhavcopy)
     # ------------------------------------------------------------------
     spot = dqm.last_ltp or 25_000.0
-    is_demo_chain = True
 
-    if "uploaded_file" in dir() and uploaded_file is not None:
+    smart_api_md = None
+    if secrets_ok:
         try:
-            df      = pd.read_csv(BytesIO(uploaded_file.getvalue()))
-            missing = sorted(set(REQUIRED_COLUMNS) - set(df.columns))
-            if not missing:
-                option_chain  = df
-                is_demo_chain = False
-            else:
-                st.warning(f"CSV missing columns: {', '.join(missing)} — using synthetic data.")
-                option_chain = _build_demo_chain(spot)
+            creds = SmartApiCredentials.from_mapping({k: _get_secret(k) for k in SMARTAPI_SECRET_KEYS})
+            smart_api_md = SmartApiMarketData(creds)
         except Exception:
-            option_chain = _build_demo_chain(spot)
-    else:
-        uploaded_file = None
-        option_chain  = _build_demo_chain(spot)
+            smart_api_md = None
+
+    chain_service = OptionChainService()
+    option_chain, chain_source_label = chain_service.get_real_option_chain(
+        smart_api=smart_api_md,
+        spot_price=spot,
+        expiry_days=st.session_state["expiry_days"],
+    )
 
     # ------------------------------------------------------------------
     # Analysis + Greeks
     # ------------------------------------------------------------------
-    st.subheader("📊 Option-Chain Analysis & Trade Signal")
-    if is_demo_chain:
-        st.caption("⚠️ Using **synthetic** option-chain data — upload a real NSE option chain CSV for live analysis.")
+    st.subheader("📊 Real-Time Option-Chain Analysis & Trade Signal")
+    st.caption(f"Data Source: **{chain_source_label}**")
 
     try:
         chain_analysis = OptionChainAnalyzer().analyze(option_chain, spot)
@@ -609,7 +600,7 @@ def main() -> None:
 
         _render_trade_recommendation(
             signal, reason, advice, chain_analysis,
-            best_strike, all_greeks, regime, is_demo_chain, spot,
+            best_strike, all_greeks, regime, chain_source_label, spot,
         )
 
     except Exception as exc:
