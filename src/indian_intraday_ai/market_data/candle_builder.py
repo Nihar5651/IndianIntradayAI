@@ -38,6 +38,8 @@ TIMEFRAMES: dict[str, int] = {
     "3m": 3,
     "5m": 5,
     "15m": 15,
+    "30m": 30,
+    "1h": 60,
 }
 
 MAX_HISTORY = 500  # completed candles kept per (symbol, timeframe)
