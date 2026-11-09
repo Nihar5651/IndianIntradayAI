@@ -44,6 +44,9 @@ from indian_intraday_ai.market_analysis.fakeout_detector import FakeoutDetector
 from indian_intraday_ai.market_analysis.futures_positioning import FuturesPositioningEngine
 from indian_intraday_ai.market_analysis.breadth_heavyweights import HeavyweightBreadthEngine
 from indian_intraday_ai.options.iv_greeks_filter import OptionSensitivityFilter
+from indian_intraday_ai.market_analysis.regime_detector import MarketRegimeDetector
+from indian_intraday_ai.strategies.strategy_engine import StrategySelectionEngine, StrategySignal
+from indian_intraday_ai.options.live_contract_selector import LiveContractSelector
 
 
 @dataclass
@@ -82,6 +85,35 @@ class ConfluenceDecision:
     futures_positioning: str | None = None
     breadth_bias: str | None = None
     setup_type: str = "NO_SETUP"
+    bullish_score: int = 0
+    bearish_score: int = 0
+    conflict_penalty: int = 0
+    conflicts_detected: list[str] = field(default_factory=list)
+    regime: str = "UNCERTAIN"
+    strategy_signal: StrategySignal | None = None
+
+    @property
+    def strategy_name(self) -> str:
+        if self.strategy_signal and hasattr(self.strategy_signal, "strategy_name"):
+            strat = self.strategy_signal.strategy_name
+            return strat.value if hasattr(strat, "value") else str(strat)
+        return self.setup_type or "NO_SETUP"
+
+    @property
+    def entry_trigger(self) -> float | None:
+        return self.trade_setup.entry_trigger if self.trade_setup else None
+
+    @property
+    def stop_loss(self) -> float | None:
+        return self.trade_setup.stop_loss if self.trade_setup else None
+
+    @property
+    def target_1(self) -> float | None:
+        return self.trade_setup.target_1 if self.trade_setup else None
+
+    @property
+    def rejection_reasons(self) -> list[str]:
+        return self.conflicts_detected if self.conflicts_detected else ([self.explanation] if self.verdict == "HOLD" else [])
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -125,7 +157,7 @@ class ConfluenceStrategyEngine:
     def __init__(
         self,
         min_entry_score: int = 75,
-        min_reward_risk: float = 1.8,
+        min_reward_risk: float = 1.5,
         strike_interval: float = 50.0,
     ):
         self.min_entry_score = min_entry_score
@@ -145,6 +177,14 @@ class ConfluenceStrategyEngine:
         self.futures_engine = FuturesPositioningEngine()
         self.breadth_engine = HeavyweightBreadthEngine()
         self.option_filter = OptionSensitivityFilter()
+        self.regime_detector = MarketRegimeDetector()
+        self.strategy_selector = StrategySelectionEngine()
+        self.contract_selector = LiveContractSelector(strike_interval=strike_interval)
+
+        # Signal deduplication & wave lifecycle tracking
+        self._last_signal_direction: str = "NONE"
+        self._last_signal_spot: float = 0.0
+        self._last_signal_bar_ts: Any = None
 
     @staticmethod
     def _to_dataframe(candles_or_df: Any) -> pd.DataFrame:
@@ -236,10 +276,27 @@ class ConfluenceStrategyEngine:
 
         spot = spot_price if (spot_price and spot_price > 0) else float(df_5m["close"].iloc[-1])
 
+        # -------------------------------------------------------------
+        # Symmetric Evidence Accumulators
+        # -------------------------------------------------------------
+        bullish_mtf = 0
+        bearish_mtf = 0
+        bullish_struct = 0
+        bearish_struct = 0
+        bullish_deriv = 0
+        bearish_deriv = 0
+        bullish_vol = 0
+        bearish_vol = 0
+        bullish_risk = 0
+        bearish_risk = 0
+
+        conflicts: list[str] = []
+        bullish_evidence: list[str] = []
+        bearish_evidence: list[str] = []
+
         # =============================================================
         # LAYER 1: Multi-Timeframe Alignment (Max 20 pts)
         # =============================================================
-        score_mtf = 0
         tfs = {"5m": df_5m}
         if not df_15m.empty:
             tfs["15m"] = df_15m
@@ -257,41 +314,48 @@ class ConfluenceStrategyEngine:
         c_5m_str = t5.direction if t5 else "Unknown"
 
         # 15m bias (8 pts)
-        if dominant_bias == "BULLISH" and t15 and t15.direction == "BULLISH":
-            score_mtf += 8
-        elif dominant_bias == "BEARISH" and t15 and t15.direction == "BEARISH":
-            score_mtf += 8
-        elif t15 and t15.direction != "SIDEWAYS":
-            score_mtf += 4
+        if t15 and t15.direction == "BULLISH":
+            bullish_mtf += 8
+            bullish_evidence.append("15m Trend Bullish")
+        elif t15 and t15.direction == "BEARISH":
+            bearish_mtf += 8
+            bearish_evidence.append("15m Trend Bearish")
+        elif t15 and t15.direction == "SIDEWAYS":
+            bullish_mtf += 3
+            bearish_mtf += 3
 
         # 5m confirmation (8 pts)
-        if dominant_bias == "BULLISH" and t5 and t5.direction == "BULLISH":
-            score_mtf += 8
-        elif dominant_bias == "BEARISH" and t5 and t5.direction == "BEARISH":
-            score_mtf += 8
-        elif t5 and t5.direction != "SIDEWAYS":
-            score_mtf += 4
+        if t5 and t5.direction == "BULLISH":
+            bullish_mtf += 8
+            bullish_evidence.append("5m Trend Bullish")
+        elif t5 and t5.direction == "BEARISH":
+            bearish_mtf += 8
+            bearish_evidence.append("5m Trend Bearish")
+        elif t5 and t5.direction == "SIDEWAYS":
+            bullish_mtf += 3
+            bearish_mtf += 3
 
         # 1m entry timing (4 pts)
-        if t1:
-            if dominant_bias == "BULLISH" and t1.direction == "BULLISH":
-                score_mtf += 4
-            elif dominant_bias == "BEARISH" and t1.direction == "BEARISH":
-                score_mtf += 4
-            elif t1.direction == "SIDEWAYS":
-                score_mtf += 2
+        if t1 and t1.direction == "BULLISH":
+            bullish_mtf += 4
+        elif t1 and t1.direction == "BEARISH":
+            bearish_mtf += 4
         else:
-            score_mtf += 2
+            bullish_mtf += 2
+            bearish_mtf += 2
 
-        score_mtf = min(20, score_mtf)
+        # Check MTF Conflict
+        if t15 and t5 and t15.direction != t5.direction and t15.direction != "SIDEWAYS" and t5.direction != "SIDEWAYS":
+            conflicts.append(f"15m {t15.direction} directly conflicts with 5m {t5.direction}")
+
+        score_mtf = max(bullish_mtf, bearish_mtf)
 
         # =============================================================
         # LAYER 2: Market Structure & Fakeout Detector (Max 25 pts)
         # =============================================================
-        score_struct = 0
         struct_report = self.structure_engine.analyze(df_5m, timeframe="5m")
 
-        # VWAP check
+        # VWAP check (8 pts)
         vwap_val = None
         vwap_status_str = "Neutral"
         try:
@@ -301,12 +365,15 @@ class ConfluenceStrategyEngine:
                 vwap_val = c_vwap
                 if spot > c_vwap:
                     vwap_status_str = f"Above VWAP (₹{c_vwap:,.1f})"
-                    if dominant_bias == "BULLISH":
-                        score_struct += 8
+                    bullish_struct += 8
+                    bullish_evidence.append(vwap_status_str)
                 elif spot < c_vwap:
                     vwap_status_str = f"Below VWAP (₹{c_vwap:,.1f})"
-                    if dominant_bias == "BEARISH":
-                        score_struct += 8
+                    bearish_struct += 8
+                    bearish_evidence.append(vwap_status_str)
+                else:
+                    bullish_struct += 4
+                    bearish_struct += 4
         except Exception:
             vwap_status_str = "VWAP Unavailable"
 
@@ -315,45 +382,54 @@ class ConfluenceStrategyEngine:
         last_bos = struct_report.last_bos
         last_choch = struct_report.last_choch
 
-        if dominant_bias == "BULLISH":
-            if last_bos and last_bos.break_type == "BULLISH_BOS":
-                score_struct += 9
-                bos_str = f"Bullish BOS confirmed at ₹{last_bos.level:,.1f}"
-            elif last_choch and last_choch.break_type == "BULLISH_CHOCH":
-                score_struct += 6
-                bos_str = f"Bullish CHoCH reversal at ₹{last_choch.level:,.1f}"
-        elif dominant_bias == "BEARISH":
-            if last_bos and last_bos.break_type == "BEARISH_BOS":
-                score_struct += 9
-                bos_str = f"Bearish BOS confirmed at ₹{last_bos.level:,.1f}"
-            elif last_choch and last_choch.break_type == "BEARISH_CHOCH":
-                score_struct += 6
-                bos_str = f"Bearish CHoCH reversal at ₹{last_choch.level:,.1f}"
+        if last_bos and last_bos.break_type == "BULLISH_BOS":
+            bullish_struct += 9
+            bos_str = f"Bullish BOS confirmed at ₹{last_bos.level:,.1f}"
+            bullish_evidence.append(bos_str)
+        elif last_choch and last_choch.break_type == "BULLISH_CHOCH":
+            bullish_struct += 6
+            bos_str = f"Bullish CHoCH reversal at ₹{last_choch.level:,.1f}"
+            bullish_evidence.append(bos_str)
+
+        if last_bos and last_bos.break_type == "BEARISH_BOS":
+            bearish_struct += 9
+            bos_str = f"Bearish BOS confirmed at ₹{last_bos.level:,.1f}"
+            bearish_evidence.append(bos_str)
+        elif last_choch and last_choch.break_type == "BEARISH_CHOCH":
+            bearish_struct += 6
+            bos_str = f"Bearish CHoCH reversal at ₹{last_choch.level:,.1f}"
+            bearish_evidence.append(bos_str)
 
         # Swings classification (HH/HL or LH/LL) (8 pts)
         if struct_report.swings:
             last_swing = struct_report.swings[-1]
-            if dominant_bias == "BULLISH" and last_swing.classification in ("HH", "HL"):
-                score_struct += 8
-            elif dominant_bias == "BEARISH" and last_swing.classification in ("LL", "LH"):
-                score_struct += 8
+            if last_swing.classification in ("HH", "HL"):
+                bullish_struct += 8
+                bullish_evidence.append(f"Structure: {last_swing.classification} at ₹{last_swing.price:,.1f}")
+            elif last_swing.classification in ("LL", "LH"):
+                bearish_struct += 8
+                bearish_evidence.append(f"Structure: {last_swing.classification} at ₹{last_swing.price:,.1f}")
             else:
-                score_struct += 4
+                bullish_struct += 4
+                bearish_struct += 4
 
-        score_struct = min(25, score_struct)
+        score_struct = max(bullish_struct, bearish_struct)
 
-        # Gate 2: Liquidity Sweep / Fakeout Protection
+        # Gate 2: Liquidity Sweep / Fakeout Protection (active only within last 3 bars)
         gate_liquidity_sweep = True
-        recent_sweeps = struct_report.liquidity_sweeps[-2:]
+        recent_timestamps = set(df_5m["timestamp"].tail(3).astype(str)) if "timestamp" in df_5m.columns else set()
+        active_sweeps = [s for s in struct_report.liquidity_sweeps if str(s.timestamp) in recent_timestamps]
         if dominant_bias == "BULLISH":
-            for s in recent_sweeps:
+            for s in active_sweeps:
                 if s.sweep_type == "BUY_SIDE_LIQUIDITY":
                     gate_liquidity_sweep = False
+                    conflicts.append("Active Buy-Side Liquidity Sweep (Bull Trap risk)")
                     break
         elif dominant_bias == "BEARISH":
-            for s in recent_sweeps:
+            for s in active_sweeps:
                 if s.sweep_type == "SELL_SIDE_LIQUIDITY":
                     gate_liquidity_sweep = False
+                    conflicts.append("Active Sell-Side Liquidity Sweep (Bear Trap risk)")
                     break
 
         # Dedicated Fakeout Engine Evaluation
@@ -385,7 +461,6 @@ class ConfluenceStrategyEngine:
         # =============================================================
         # LAYER 3: Derivatives, Futures Positioning & Breadth (Max 20 pts)
         # =============================================================
-        score_deriv = 0
         deriv_report = self.derivatives_analyzer.analyze(
             option_analysis=option_chain_data,
             spot_price=spot,
@@ -393,92 +468,82 @@ class ConfluenceStrategyEngine:
             futures_price=futures_price,
         )
 
-        # NIFTY Futures Buildup Intelligence
         futures_report = self.futures_engine.analyze(
             futures_price=futures_price,
             spot_price=spot,
             futures_oi=futures_oi,
         )
 
-        # Market Breadth & Heavyweights
         breadth_rep = self.breadth_engine.analyze(
             constituents_data=constituents_data,
             heavyweights_data=heavyweights_data,
             index_direction=dominant_bias,
         )
 
-        # 1. Derivatives (OI PCR & Max Pain) - Up to 12 pts
         pcr_str = "Unavailable"
         if deriv_report.available and deriv_report.pcr_oi is not None:
             pcr = deriv_report.pcr_oi
             pcr_str = f"OI PCR: {pcr:.2f} ({deriv_report.derivatives_bias})"
 
-            if dominant_bias == "BULLISH":
-                if pcr >= 1.15:
-                    score_deriv += 8
-                elif pcr >= 0.95:
-                    score_deriv += 5
-                elif pcr < 0.80:
-                    score_deriv += 0
-                else:
-                    score_deriv += 3
-            elif dominant_bias == "BEARISH":
-                if pcr <= 0.85:
-                    score_deriv += 8
-                elif pcr <= 1.05:
-                    score_deriv += 5
-                elif pcr > 1.20:
-                    score_deriv += 0
-                else:
-                    score_deriv += 3
+            if pcr >= 1.15:
+                bullish_deriv += 8
+                bullish_evidence.append(f"Bullish OI PCR: {pcr:.2f}")
+            elif pcr >= 0.95:
+                bullish_deriv += 5
+                bearish_deriv += 3
+            elif pcr <= 0.85:
+                bearish_deriv += 8
+                bearish_evidence.append(f"Bearish OI PCR: {pcr:.2f}")
+            elif pcr <= 1.05:
+                bearish_deriv += 5
+                bullish_deriv += 3
             else:
-                score_deriv += 3
+                bullish_deriv += 3
+                bearish_deriv += 3
 
-            # Max Pain & Strike walls context (4 pts)
+            # Max Pain context (4 pts)
             if deriv_report.max_pain:
-                if dominant_bias == "BULLISH" and spot >= deriv_report.max_pain:
-                    score_deriv += 4
-                elif dominant_bias == "BEARISH" and spot <= deriv_report.max_pain:
-                    score_deriv += 4
+                if spot >= deriv_report.max_pain:
+                    bullish_deriv += 4
+                elif spot <= deriv_report.max_pain:
+                    bearish_deriv += 4
                 else:
-                    score_deriv += 2
-            else:
-                score_deriv += 2
+                    bullish_deriv += 2
+                    bearish_deriv += 2
         else:
-            # Zero fabrication: award 0 points when derivatives feed is absent
-            score_deriv += 0
             pcr_str = "Derivatives feed unavailable (0 pts awarded)"
 
-        # 2. Futures Buildup Points - Up to 4 pts
+        # Futures Buildup (4 pts)
         futures_pos_str = futures_report.positioning
         if futures_report.available:
-            if dominant_bias == "BULLISH" and futures_report.positioning in ("LONG_BUILDUP", "SHORT_COVERING"):
-                score_deriv += 4
-            elif dominant_bias == "BEARISH" and futures_report.positioning in ("SHORT_BUILDUP", "LONG_UNWINDING"):
-                score_deriv += 4
-            elif futures_report.positioning == "NEUTRAL":
-                score_deriv += 2
+            if futures_report.positioning in ("LONG_BUILDUP", "SHORT_COVERING"):
+                bullish_deriv += 4
+                bullish_evidence.append(f"Futures: {futures_report.positioning}")
+            elif futures_report.positioning in ("SHORT_BUILDUP", "LONG_UNWINDING"):
+                bearish_deriv += 4
+                bearish_evidence.append(f"Futures: {futures_report.positioning}")
             else:
-                score_deriv += 0
+                bullish_deriv += 2
+                bearish_deriv += 2
 
-        # 3. Market Breadth & Heavyweights Points - Up to 4 pts
+        # Market Breadth & Heavyweights (4 pts)
         breadth_bias_str = breadth_rep.breadth_bias
         if breadth_rep.available:
-            if dominant_bias == "BULLISH" and breadth_rep.breadth_bias == "BULLISH":
-                score_deriv += 4
-            elif dominant_bias == "BEARISH" and breadth_rep.breadth_bias == "BEARISH":
-                score_deriv += 4
-            elif breadth_rep.breadth_bias == "NEUTRAL":
-                score_deriv += 2
+            if breadth_rep.breadth_bias in ("BROAD_BULLISH", "NARROW_RALLY"):
+                bullish_deriv += 4
+                bullish_evidence.append("Constituents Breadth Bullish")
+            elif breadth_rep.breadth_bias in ("BROAD_BEARISH", "NARROW_DECLINE"):
+                bearish_deriv += 4
+                bearish_evidence.append("Constituents Breadth Bearish")
             else:
-                score_deriv += 0
+                bullish_deriv += 2
+                bearish_deriv += 2
 
-        score_deriv = min(20, score_deriv)
+        score_deriv = max(bullish_deriv, bearish_deriv)
 
         # =============================================================
         # LAYER 4: Volume, Volume Profile & Volatility (Max 20 pts)
         # =============================================================
-        score_vol = 0
         vol_report = self.volatility_analyzer.analyze(df_5m)
         volume_report = self.volume_analyzer.analyze(df_5m, trend_direction=dominant_bias)
 
@@ -487,55 +552,101 @@ class ConfluenceStrategyEngine:
         rvol_str = f"RVOL {rvol:.2f}x ({volume_report.volume_classification})"
         if volume_report.volume_confirms_price:
             if rvol >= 1.2:
-                score_vol += 8
+                bullish_vol += 8
+                bearish_vol += 8
             elif rvol >= 0.8:
-                score_vol += 5
+                bullish_vol += 5
+                bearish_vol += 5
             else:
-                score_vol += 3
+                bullish_vol += 3
+                bearish_vol += 3
         else:
-            score_vol += 2
+            bullish_vol += 2
+            bearish_vol += 2
 
         # Volume Profile Analysis (POC, VAH, VAL) (6 pts)
         vp_report = calculate_volume_profile(df_5m)
-        vp_str = f"POC: ₹{vp_report.poc:,.1f}"
-        if dominant_bias == "BULLISH":
+        vp_str = f"POC: ₹{vp_report.poc:,.1f}" if vp_report.poc else "POC: N/A"
+        if vp_report.available and vp_report.vah is not None and vp_report.val is not None:
             if spot >= vp_report.vah:
-                score_vol += 6  # Strong acceptance above Value Area
+                bullish_vol += 6
                 vp_str += f" (Above VAH ₹{vp_report.vah:,.0f} - Bullish Expansion)"
-            elif spot >= vp_report.poc:
-                score_vol += 4
-                vp_str += f" (Above POC - Moderate Value)"
-            else:
-                score_vol += 2
-        elif dominant_bias == "BEARISH":
-            if spot <= vp_report.val:
-                score_vol += 6  # Strong acceptance below Value Area
+            elif spot <= vp_report.val:
+                bearish_vol += 6
                 vp_str += f" (Below VAL ₹{vp_report.val:,.0f} - Bearish Expansion)"
-            elif spot <= vp_report.poc:
-                score_vol += 4
-                vp_str += f" (Below POC - Moderate Value)"
+            elif vp_report.poc and spot >= vp_report.poc:
+                bullish_vol += 4
+                bearish_vol += 2
             else:
-                score_vol += 2
+                bearish_vol += 4
+                bullish_vol += 2
 
         # Volatility & Bollinger Squeeze state (6 pts)
         vol_str = f"{vol_report.volatility_state} (ATR {vol_report.atr:.1f} pts)"
-        if vol_report.is_squeeze:
-            vol_str += " [Squeeze Active]"
-            score_vol += 5
-        elif vol_report.volatility_state in ("NORMAL", "HIGH"):
-            score_vol += 6
-        elif vol_report.volatility_state == "EXTREME":
-            score_vol += 2
-        else:
-            score_vol += 3
+        vol_pts = 5 if vol_report.is_squeeze else (6 if vol_report.volatility_state in ("NORMAL", "HIGH") else 3)
+        bullish_vol += vol_pts
+        bearish_vol += vol_pts
 
-        score_vol = min(20, score_vol)
+        score_vol = max(bullish_vol, bearish_vol)
 
         # =============================================================
-        # LAYER 5: Risk & Option Sensitivity Engine (Max 15 pts)
+        # LAYER 5: Regime Detection & Dynamic Strategy Dispatch (Max 15 pts)
         # =============================================================
-        score_risk = 0
+        # Compute 15m Opening Range (09:15-09:30)
+        orb_h: float | None = None
+        orb_l: float | None = None
+        if not df_5m.empty and "timestamp" in df_5m.columns:
+            try:
+                first_bars = df_5m[df_5m["timestamp"].dt.time < pd.to_datetime("09:30:00").time()]
+                if not first_bars.empty:
+                    orb_h = float(first_bars["high"].max())
+                    orb_l = float(first_bars["low"].min())
+            except Exception:
+                pass
 
+        # Comprehensive 12-regime detection
+        regime_eval = self.regime_detector.analyse(
+            one_minute_candles=df_1m if not df_1m.empty else df_5m,
+            five_minute_candles=df_5m,
+            fifteen_minute_candles=df_15m if not df_15m.empty else None,
+            daily_high=daily_high,
+            daily_low=daily_low,
+            daily_close=daily_close,
+            today_open=float(df_5m["open"].iloc[0]) if not df_5m.empty else None,
+            dte=dte,
+            is_fakeout=(not gate_fakeout_passed),
+            fakeout_reason=breakout_eval.reason,
+            max_pain=deriv_report.max_pain if deriv_report.available else None,
+        )
+        detected_regime = regime_eval.get("regime", "UNCERTAIN")
+
+        # Dynamic Strategy Dispatch
+        strategy_sig = self.strategy_selector.select_and_evaluate(
+            df_5m=df_5m,
+            spot=spot,
+            regime=detected_regime,
+            vwap=vwap_val,
+            atr=vol_report.atr,
+            nearest_support=nearest_sup_level,
+            nearest_resistance=nearest_res_level,
+            daily_high=daily_high,
+            daily_low=daily_low,
+            daily_close=daily_close,
+            orb_high=orb_h,
+            orb_low=orb_l,
+            fakeout_info=breakout_eval,
+        )
+
+        if strategy_sig.is_valid and strategy_sig.action == "CALL":
+            bullish_risk += 12
+            bullish_evidence.append(f"Strategy: {strategy_sig.strategy_name}")
+        elif strategy_sig.is_valid and strategy_sig.action == "PUT":
+            bearish_risk += 12
+            bearish_evidence.append(f"Strategy: {strategy_sig.strategy_name}")
+        elif strategy_sig.action == "WAIT":
+            conflicts.append(f"Strategy Engine: {strategy_sig.rejection_reason}")
+
+        # S/R Zones analysis
         sr_report = self.sr_engine.analyze(
             current_price=spot,
             daily_high=daily_high,
@@ -551,56 +662,41 @@ class ConfluenceStrategyEngine:
         nearest_res = sr_report.nearest_resistance.mid_price if sr_report.nearest_resistance else (spot + 40.0)
         atr_val = max(vol_report.atr, 20.0)
 
-        # Setup parameters
-        if dominant_bias == "BULLISH":
-            contract_type = "CE"
-            strike = round(spot / self.strike_interval) * self.strike_interval
-            entry_trigger = max(spot, nearest_res - (0.2 * atr_val))
-            raw_sl = min(spot - (0.8 * atr_val), nearest_supp)
-            stop_loss = max(raw_sl, spot - 50.0)
-            risk_pts = max(12.0, entry_trigger - stop_loss)
-
-            overhead_res = [z for z in sr_report.resistance_zones if z.mid_price > entry_trigger + 5.0]
-            if overhead_res:
-                t1 = max(entry_trigger + 5.0, overhead_res[0].price_low)
-                if len(overhead_res) >= 2:
-                    t2 = max(t1 + 5.0, overhead_res[1].mid_price)
-                else:
-                    t2 = max(overhead_res[0].price_high + (0.5 * atr_val), entry_trigger + (2.0 * risk_pts))
-            else:
-                t1 = entry_trigger + (1.5 * risk_pts)
-                t2 = entry_trigger + (2.5 * risk_pts)
-
-            reward_pts = max(0.0, t2 - entry_trigger)
+        # Setup parameters (use strategy signal levels if valid)
+        gate_strategy_confirmed = strategy_sig.is_valid and strategy_sig.action in ("CALL", "PUT")
+        if gate_strategy_confirmed:
+            proposed_action = strategy_sig.action
+            contract_type = "CE" if proposed_action == "CALL" else "PE"
+            strike = round(strategy_sig.entry_level / self.strike_interval) * self.strike_interval
+            entry_trigger = strategy_sig.entry_level
+            stop_loss = strategy_sig.stop_loss
+            t1 = strategy_sig.target_1
+            t2 = strategy_sig.target_2
+            risk_pts = strategy_sig.risk_pts
+            reward_pts = strategy_sig.reward_pts
+            rr_ratio = strategy_sig.risk_reward_ratio
+            detected_setup = strategy_sig.strategy_name
         else:
-            contract_type = "PE"
+            proposed_action = "NONE"
+            contract_type = "CE" if dominant_bias == "BULLISH" else "PE"
             strike = round(spot / self.strike_interval) * self.strike_interval
-            entry_trigger = min(spot, nearest_supp + (0.2 * atr_val))
-            raw_sl = max(spot + (0.8 * atr_val), nearest_res)
-            stop_loss = min(raw_sl, spot + 50.0)
-            risk_pts = max(12.0, stop_loss - entry_trigger)
+            entry_trigger = spot
+            stop_loss = spot - 30.0 if contract_type == "CE" else spot + 30.0
+            risk_pts = 30.0
+            t1 = spot + 45.0 if contract_type == "CE" else spot - 45.0
+            t2 = spot + 75.0 if contract_type == "CE" else spot - 75.0
+            reward_pts = 45.0
+            rr_ratio = 1.5
+            detected_setup = strategy_sig.strategy_name if strategy_sig else "NO_SETUP"
 
-            underfoot_supp = [z for z in sr_report.support_zones if z.mid_price < entry_trigger - 5.0]
-            if underfoot_supp:
-                t1 = min(entry_trigger - 5.0, underfoot_supp[0].price_high)
-                if len(underfoot_supp) >= 2:
-                    t2 = min(t1 - 5.0, underfoot_supp[1].mid_price)
-                else:
-                    t2 = min(underfoot_supp[0].price_low - (0.5 * atr_val), entry_trigger - (2.0 * risk_pts))
-            else:
-                t1 = entry_trigger - (1.5 * risk_pts)
-                t2 = entry_trigger - (2.5 * risk_pts)
-
-            reward_pts = max(0.0, entry_trigger - t2)
-
-        rr_ratio = reward_pts / risk_pts if risk_pts > 0 else 0.0
         rr_str = f"1 : {rr_ratio:.1f}"
 
-        # Gate 3: Structural Stop Loss defined (<= 55 pts)
-        gate_structural_sl = (risk_pts <= 55.0 and risk_pts >= 10.0)
+        # Gate 3: Structural Stop Loss defined (adaptive for intraday 10-55 pts or daily ATR)
+        gate_structural_sl = (10.0 <= risk_pts <= max(55.0, 1.2 * atr_val))
 
-        # Gate 4: Reward-to-Risk ratio >= min_reward_risk (default 1.8)
-        gate_reward_risk = (rr_ratio >= self.min_reward_risk)
+        # Gate 4: Reward-to-Risk ratio >= min_reward_risk (or full target R:R >= 1.8)
+        rr_full = (abs(t2 - entry_trigger) / risk_pts) if risk_pts > 0 else 0.0
+        gate_reward_risk = (rr_ratio >= self.min_reward_risk or rr_full >= 1.8)
 
         # Gate 5: Option Sensitivity & Execution Viability Filter
         option_sens_report = self.option_filter.evaluate(
@@ -611,19 +707,54 @@ class ConfluenceStrategyEngine:
         )
         gate_execution = option_sens_report.is_favorable
 
+        # Gate 6: Option Profitability vs Theta Drag & Costs
+        contract_cand = self.contract_selector.select_contract(signal=proposed_action if proposed_action in ("CALL", "PUT") else "CALL", spot_price=spot, dte=dte)
+        option_profit_ok, option_profit_msg, net_opt_rr = self.contract_selector.validate_option_profitability(
+            contract=contract_cand,
+            underlying_spot=entry_trigger,
+            underlying_target=t2,
+            underlying_sl=stop_loss,
+            holding_hours=1.5,
+        )
+
         if rr_ratio >= 2.0:
-            score_risk += 15
+            bullish_risk += 3
+            bearish_risk += 3
         elif rr_ratio >= 1.5:
-            score_risk += 10
-        elif rr_ratio >= 1.0:
-            score_risk += 5
+            bullish_risk += 2
+            bearish_risk += 2
 
-        score_risk = min(15, score_risk)
+        score_risk = min(15, max(bullish_risk, bearish_risk))
 
         # =============================================================
-        # CONFLUENCE SYNTHESIS & HARD GATES EVALUATION
+        # CONFLUENCE SYNTHESIS & CONFLICT PENALTY
         # =============================================================
-        total_score = score_mtf + score_struct + score_deriv + score_vol + score_risk
+        total_bullish = bullish_mtf + bullish_struct + bullish_deriv + bullish_vol + bullish_risk
+        total_bearish = bearish_mtf + bearish_struct + bearish_deriv + bearish_vol + bearish_risk
+
+        # Dynamic Normalization when optional feeds (derivatives/futures/breadth) are absent
+        max_possible_points = 80.0
+        if deriv_report.available or futures_report.available or breadth_rep.available:
+            max_possible_points = 100.0
+
+        scale_factor = 100.0 / max_possible_points
+        total_bullish = min(100, int(round(total_bullish * scale_factor)))
+        total_bearish = min(100, int(round(total_bearish * scale_factor)))
+
+        conflict_penalty = 0
+        if total_bullish >= 35 and total_bearish >= 35:
+            conflict_penalty = int(min(total_bullish, total_bearish) * 0.70)
+            conflicts.append(f"Contradictory directional evidence: Bullish score {total_bullish} vs Bearish score {total_bearish}")
+
+        adj_bullish = max(0, total_bullish - conflict_penalty)
+        adj_bearish = max(0, total_bearish - conflict_penalty)
+
+        # Gate 7: Regime Viability (Block chop trading & erratic high volatility)
+        gate_regime_viable = (
+            detected_regime not in ("SIDEWAYS", "LOW_VOLATILITY", "EXPIRY_DAY_PIN", "UNCERTAIN", "HIGH_VOLATILITY")
+            or (detected_setup == "FAILED_BREAKOUT_REVERSAL")
+            or (detected_regime == "HIGH_VOLATILITY" and gate_strategy_confirmed and strategy_sig.confidence >= 0.88)
+        )
 
         all_gates_passed = (
             gate_data_freshness
@@ -632,6 +763,9 @@ class ConfluenceStrategyEngine:
             and gate_structural_sl
             and gate_reward_risk
             and gate_execution
+            and gate_regime_viable
+            and gate_strategy_confirmed
+            and option_profit_ok
         )
 
         hard_gates_dict = {
@@ -641,6 +775,9 @@ class ConfluenceStrategyEngine:
             "structural_sl_defined": gate_structural_sl,
             "risk_reward_viable": gate_reward_risk,
             "execution_viable": gate_execution,
+            "regime_viable": gate_regime_viable,
+            "strategy_confirmed": gate_strategy_confirmed,
+            "option_profitability_viable": option_profit_ok,
             "all_passed": all_gates_passed,
         }
 
@@ -658,44 +795,53 @@ class ConfluenceStrategyEngine:
             setup_type=detected_setup,
         )
 
-        if total_score >= self.min_entry_score and all_gates_passed:
-            if dominant_bias == "BULLISH":
-                verdict = "CALL"
-                explanation = (
-                    f"CONFIRMED CALL ENTRY (Score: {total_score}/100): High-confluence bullish setup across "
-                    f"15m/5m structure ({bos_str}), confirmed by derivatives, volume profile, and futures. All 5 hard gates passed."
-                )
-            elif dominant_bias == "BEARISH":
-                verdict = "PUT"
-                explanation = (
-                    f"CONFIRMED PUT ENTRY (Score: {total_score}/100): High-confluence bearish setup across "
-                    f"15m/5m structure ({bos_str}), confirmed by derivatives, volume profile, and futures. All 5 hard gates passed."
-                )
-            else:
-                verdict = "HOLD"
-                explanation = (
-                    f"HOLD (Score: {total_score}/100): Market direction is conflicted/sideways despite favorable score. "
-                    "Awaiting directional breakout confirmation."
-                )
+        # Final verdict selection
+        if adj_bullish >= self.min_entry_score and adj_bullish > adj_bearish + 15 and all_gates_passed:
+            verdict = "CALL"
+            total_score = adj_bullish
+            bias = "BULLISH"
+            explanation = (
+                f"CONFIRMED CALL ENTRY (Score: {total_score}/100 | Setup: {detected_setup}): High-confluence bullish setup across "
+                f"15m/5m structure ({bos_str}), confirmed by derivatives, volume profile, and futures. All hard gates passed."
+            )
+            self._last_signal_direction = "CALL"
+            self._last_signal_spot = spot
+        elif adj_bearish >= self.min_entry_score and adj_bearish > adj_bullish + 15 and all_gates_passed:
+            verdict = "PUT"
+            total_score = adj_bearish
+            bias = "BEARISH"
+            explanation = (
+                f"CONFIRMED PUT ENTRY (Score: {total_score}/100 | Setup: {detected_setup}): High-confluence bearish setup across "
+                f"15m/5m structure ({bos_str}), confirmed by derivatives, volume profile, and futures. All hard gates passed."
+            )
+            self._last_signal_direction = "PUT"
+            self._last_signal_spot = spot
         else:
             verdict = "HOLD"
+            total_score = max(adj_bullish, adj_bearish)
+            bias = "BULLISH" if adj_bullish > adj_bearish + 10 else ("BEARISH" if adj_bearish > adj_bullish + 10 else "NEUTRAL")
             reasons = []
             if total_score < 60:
-                reasons.append(f"Confluence score ({total_score}/100) is below entry threshold (75).")
+                reasons.append(f"Confluence score ({total_score}/100) below entry threshold ({self.min_entry_score}).")
             elif total_score < self.min_entry_score:
-                reasons.append(f"Setup developing ({total_score}/100), but awaiting final confirmation.")
+                reasons.append(f"Setup developing ({total_score}/100), awaiting final confirmation.")
 
+            if conflicts:
+                reasons.append(f"Conflict: {conflicts[0]}.")
+            if not gate_regime_viable:
+                reasons.append(f"Regime is {detected_regime} — directional buying blocked to avoid chop losses.")
             if not gate_fakeout_passed:
                 reasons.append(f"Fakeout Engine: {breakout_eval.reason}")
             elif not gate_liquidity_sweep:
                 reasons.append("Active opposing liquidity sweep detected (trap risk).")
-
             if not gate_structural_sl:
                 reasons.append(f"Structural stop-loss distance ({risk_pts:.1f} pts) is outside acceptable bounds.")
             if not gate_reward_risk:
-                reasons.append(f"Reward-to-risk ratio ({rr_str}) does not meet the minimum 1:{self.min_reward_risk:.1f} threshold.")
+                reasons.append(f"Reward-to-risk ratio ({rr_str}) below minimum 1:{self.min_reward_risk:.1f} threshold.")
             if not gate_execution:
                 reasons.append(f"Option execution filter: {option_sens_report.summary}")
+            if not option_profit_ok:
+                reasons.append(f"Option Profitability: {option_profit_msg}")
 
             if not reasons:
                 reasons.append("Market conditions do not offer an asymmetric risk/reward edge.")
@@ -708,22 +854,21 @@ class ConfluenceStrategyEngine:
             else "N/A"
         )
 
-        # Conditions Matrix
         conditions = [
-            ConditionItem("15m Trend", c_15m_str, "CONFIRMED" if c_15m_str == dominant_bias else ("SUPPORTIVE" if c_15m_str != "SIDEWAYS" else "INSUFFICIENT")),
-            ConditionItem("5m Trend", c_5m_str, "CONFIRMED" if c_5m_str == dominant_bias else "CONFLICTING"),
-            ConditionItem("Intraday VWAP", vwap_status_str, "CONFIRMED" if ("Above" in vwap_status_str and dominant_bias == "BULLISH") or ("Below" in vwap_status_str and dominant_bias == "BEARISH") else "CONFLICTING"),
+            ConditionItem("15m Trend", c_15m_str, "CONFIRMED" if c_15m_str == bias else ("SUPPORTIVE" if c_15m_str != "SIDEWAYS" else "INSUFFICIENT")),
+            ConditionItem("5m Trend", c_5m_str, "CONFIRMED" if c_5m_str == bias else "CONFLICTING"),
+            ConditionItem("Intraday VWAP", vwap_status_str, "CONFIRMED" if ("Above" in vwap_status_str and bias == "BULLISH") or ("Below" in vwap_status_str and bias == "BEARISH") else "CONFLICTING"),
             ConditionItem("Market Structure", bos_str, "CONFIRMED" if "BOS" in bos_str or "CHoCH" in bos_str else "INSUFFICIENT"),
             ConditionItem("Fakeout Detector", f"Verified Clean ({detected_setup})" if gate_fakeout_passed else breakout_eval.breakout_type, "CONFIRMED" if gate_fakeout_passed else "CONFLICTING"),
             ConditionItem("Derivatives & Futures", f"{pcr_str} | Futures: {futures_pos_str}", "SUPPORTIVE" if deriv_report.confirms_spot else "CONFLICTING"),
             ConditionItem("Volume & Profile", f"{rvol_str} | {vp_str}", "CONFIRMED" if rvol >= 1.2 else "SUPPORTIVE"),
-            ConditionItem("Option & Risk Quality", f"{rr_str} (Risk: {risk_pts:.1f} pts) | Theta: {theta_txt}", "CONFIRMED" if (gate_reward_risk and gate_execution) else "CONFLICTING"),
+            ConditionItem("Option & Risk Quality", f"{rr_str} (Risk: {risk_pts:.1f} pts) | Theta: {theta_txt}", "CONFIRMED" if (gate_reward_risk and gate_execution and option_profit_ok) else "CONFLICTING"),
         ]
 
         return ConfluenceDecision(
             verdict=verdict,
             confluence_score=total_score,
-            bias=dominant_bias,
+            bias=bias,
             score_breakdown={
                 "multi_timeframe": score_mtf,
                 "market_structure": score_struct,
@@ -739,4 +884,10 @@ class ConfluenceStrategyEngine:
             futures_positioning=futures_pos_str,
             breadth_bias=breadth_rep.breadth_bias,
             setup_type=detected_setup,
+            bullish_score=adj_bullish,
+            bearish_score=adj_bearish,
+            conflict_penalty=conflict_penalty,
+            conflicts_detected=conflicts,
+            regime=detected_regime,
+            strategy_signal=strategy_sig,
         )

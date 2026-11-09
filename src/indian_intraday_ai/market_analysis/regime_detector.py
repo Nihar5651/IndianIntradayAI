@@ -257,9 +257,17 @@ class MarketRegimeDetector:
         one_minute_candles,
         five_minute_candles,
         fifteen_minute_candles=None,
+        daily_high: float | None = None,
+        daily_low: float | None = None,
+        daily_close: float | None = None,
+        today_open: float | None = None,
+        dte: int | None = None,
+        is_fakeout: bool = False,
+        fakeout_reason: str = "",
+        max_pain: float | None = None,
     ) -> dict[str, Any]:
         """
-        Analyse 1m, 5m and 15m completed candles into 10 market regimes
+        Analyse 1m, 5m and 15m completed candles into 12 market regimes
         with multi-factor scores, confidence rating, and trading posture.
         """
         one_minute_data = self._candles_to_dataframe(one_minute_candles)
@@ -373,14 +381,42 @@ class MarketRegimeDetector:
         )
 
         # -------------------------------------------------------------
-        # Regime Classification (10 Distinct Regimes)
+        # Regime Classification (12 Distinct Regimes)
         # -------------------------------------------------------------
         primary = fifteen["direction"]
         confirmation = five["direction"]
         short_term = one["direction"]
 
-        # Check for High Volatility
-        if volatility_score >= 80:
+        # 1. Check for Fakeout / Bull or Bear Trap Environment
+        if is_fakeout:
+            regime = "FAKEOUT"
+            direction = "SIDEWAYS"
+            reason = f"Trap detected: {fakeout_reason or 'Failed breakout returned inside range. Re-entry locked.'}"
+            posture = "COUNTER_TREND"
+            confidence = 0.80
+
+        # 2. Check for Expiry Day Pinning / Heavy Theta Bleed
+        elif dte == 0 and max_pain is not None and abs(float(five["close"]) - max_pain) <= 35.0:
+            regime = "EXPIRY_DAY_PIN"
+            direction = "SIDEWAYS"
+            reason = f"0-DTE Expiry Day pinning near Max Pain (₹{max_pain:,.0f}). Rapid theta bleed risk for buyers."
+            posture = "WAIT_AND_SEE"
+            confidence = 0.85
+
+        # 3. Check for Gap Expansion / Follow-Through
+        elif today_open is not None and daily_high is not None and daily_low is not None and (
+            (today_open > daily_high + 25.0 and confirmation == "BULLISH")
+            or (today_open < daily_low - 25.0 and confirmation == "BEARISH")
+        ):
+            regime = "GAP_EXPANSION"
+            direction = confirmation
+            gap_type = "Gap-Up" if today_open > daily_high else "Gap-Down"
+            reason = f"{gap_type} expansion beyond prior session range (₹{daily_low:,.0f} - ₹{daily_high:,.0f}) with directional follow-through."
+            posture = "TREND_FOLLOWING"
+            confidence = 0.85
+
+        # 4. Check for High Volatility (erratic whipsaws without strong directional alignment)
+        elif volatility_score >= 80 and (primary != confirmation or primary == "SIDEWAYS"):
             regime = "HIGH_VOLATILITY"
             direction = primary if primary == confirmation else "UNCERTAIN"
             reason = "Elevated ATR percentile indicates erratic swings. Directional entries require caution."

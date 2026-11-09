@@ -430,8 +430,13 @@ def calculate_vwap(data: pd.DataFrame) -> pd.Series:
     typical_price = (data["high"] + data["low"] + data["close"]) / 3.0
     price_volume = typical_price * data["volume"]
 
-    cumulative_price_volume = price_volume.groupby(session_dates).cumsum()
-    cumulative_volume = data["volume"].groupby(session_dates).cumsum()
+    # If dataset consists of daily candles (each row a distinct date), use 20-period rolling Volume Weighted Price
+    if session_dates.nunique() > 0.8 * len(data) and len(data) > 5:
+        cumulative_price_volume = price_volume.rolling(20, min_periods=1).sum()
+        cumulative_volume = data["volume"].rolling(20, min_periods=1).sum()
+    else:
+        cumulative_price_volume = price_volume.groupby(session_dates).cumsum()
+        cumulative_volume = data["volume"].groupby(session_dates).cumsum()
 
     vwap = cumulative_price_volume / cumulative_volume.replace(0, np.nan)
     return vwap

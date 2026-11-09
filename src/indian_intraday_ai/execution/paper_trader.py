@@ -225,10 +225,11 @@ class PaperTrader:
         current_option_price: float,
         timestamp: datetime,
     ) -> Optional[PaperPosition]:
-        """Monitors structural invalidation on the underlying index.
+        """Monitors structural invalidation and target milestones on the underlying index.
 
         If the underlying NIFTY crosses the structural stop-loss (even before the option
         premium reaches its stop-loss), the position is invalidated and closed.
+        If the underlying NIFTY reaches target 1, ratchets option stop-loss to Breakeven.
         """
         if self.open_position is None:
             return None
@@ -251,14 +252,22 @@ class PaperTrader:
                     "UNDERLYING_INVALIDATION",
                 )
 
+        # Breakeven lock when underlying reaches target 1
+        if pos.underlying_target is not None:
+            if (pos.option_type == "CE" and underlying_spot >= pos.underlying_target) or (
+                pos.option_type == "PE" and underlying_spot <= pos.underlying_target
+            ):
+                pos.stop_loss = max(pos.stop_loss, pos.entry_price)
+
         return None
 
     def update_price(
         self,
         option_price: float,
         timestamp: datetime,
+        trail_buffer: Optional[float] = None,
     ):
-        """Update premium, trail stop-loss and monitor exits."""
+        """Update premium, trail stop-loss structurally and monitor exits."""
 
         if self.open_position is None:
             return None
@@ -276,11 +285,21 @@ class PaperTrader:
             option_price,
         )
 
-        # Move stop-loss upward when appropriate.
+        # Determine target 1 for breakeven lock
+        target_1 = (
+            position.trade_plan.option_target_price
+            if position.trade_plan is not None
+            else position.target_price
+        )
+
+        # Move stop-loss upward when appropriate (structural trailing).
         position.stop_loss = (
             self.risk_manager.update_trailing_stop(
                 current_stop_loss=position.stop_loss,
                 highest_price=position.highest_price,
+                entry_price=position.entry_price,
+                target_1=target_1,
+                trail_buffer=trail_buffer,
             )
         )
 

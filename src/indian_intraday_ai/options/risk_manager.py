@@ -51,6 +51,8 @@ class OptionRiskManager:
         self,
         entry_price: float,
         quantity: int = 1,
+        structural_sl: float | None = None,
+        structural_target: float | None = None,
     ) -> OptionRiskPlan:
 
         if entry_price <= 0:
@@ -59,15 +61,25 @@ class OptionRiskManager:
         if quantity <= 0:
             raise ValueError("Quantity must be positive.")
 
-        stop_loss = round(
-            entry_price * (1 - self.stop_loss_percent / 100),
-            2,
-        )
+        if structural_sl is not None:
+            if not 0 < structural_sl < entry_price:
+                raise ValueError("Structural stop-loss must be between 0 and entry price.")
+            stop_loss = round(structural_sl, 2)
+        else:
+            stop_loss = round(
+                entry_price * (1 - self.stop_loss_percent / 100),
+                2,
+            )
 
-        target_price = round(
-            entry_price * (1 + self.target_percent / 100),
-            2,
-        )
+        if structural_target is not None:
+            if structural_target <= entry_price:
+                raise ValueError("Structural target must exceed entry price.")
+            target_price = round(structural_target, 2)
+        else:
+            target_price = round(
+                entry_price * (1 + self.target_percent / 100),
+                2,
+            )
 
         risk_amount = round(
             (entry_price - stop_loss) * quantity,
@@ -102,19 +114,34 @@ class OptionRiskManager:
         self,
         current_stop_loss: float,
         highest_price: float,
+        entry_price: float | None = None,
+        target_1: float | None = None,
+        trail_buffer: float | None = None,
     ) -> float:
         """
         Move the stop-loss upward as the option premium rises.
 
-        Never lowers an existing stop-loss.
+        - If target_1 is achieved, ratchets stop-loss to Breakeven (entry_price).
+        - If trail_buffer is provided (e.g. volatility/ATR based), trails by that buffer.
+        - Otherwise uses default trailing_percent.
+        - Never lowers an existing stop-loss.
         """
 
         if current_stop_loss <= 0 or highest_price <= 0:
             raise ValueError("Prices must be positive.")
 
-        trailing_stop = round(
-            highest_price * (1 - self.trailing_percent / 100),
-            2,
-        )
+        if trail_buffer is not None and trail_buffer > 0:
+            trailing_stop = round(highest_price - trail_buffer, 2)
+        else:
+            trailing_stop = round(
+                highest_price * (1 - self.trailing_percent / 100),
+                2,
+            )
 
-        return max(current_stop_loss, trailing_stop)
+        new_stop = max(current_stop_loss, trailing_stop)
+
+        # Breakeven lock once Target 1 is hit or exceeded
+        if target_1 is not None and highest_price >= target_1 and entry_price is not None:
+            new_stop = max(new_stop, entry_price)
+
+        return new_stop

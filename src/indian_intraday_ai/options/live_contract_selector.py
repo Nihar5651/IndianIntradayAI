@@ -26,6 +26,9 @@ class OptionContract:
     instrument_token: Optional[str] = None
     estimated_premium: float = 0.0
     estimated_delta: float = 0.50
+    estimated_theta: float = -12.0
+    estimated_gamma: float = 0.0005
+    estimated_vega: float = 8.0
     estimated_spread_pts: float = 0.50
     theta_risk_level: str = "MODERATE"  # "LOW", "MODERATE", "HIGH"
 
@@ -85,15 +88,29 @@ class LiveContractSelector:
         option_type = "CE" if signal in ("BUY_CALL", "CALL") else "PE"
         strike = self.get_optimal_strike(spot_price, signal)
 
-        # Estimate intrinsic + extrinsic premium for NIFTY
-        moneyness = (spot_price - strike) if option_type == "CE" else (strike - spot_price)
-        intrinsic = max(0.0, moneyness)
-        extrinsic = 60.0  # Typical baseline weekly NIFTY extrinsic value near ATM
-        estimated_premium = round(intrinsic + extrinsic, 2)
-
-        # Delta estimate
-        delta = 0.50 + (0.002 * moneyness)
-        delta = round(max(0.10, min(0.95, delta)), 2)
+        # Dynamic Black-Scholes valuation
+        try:
+            from indian_intraday_ai.options.greeks_calculator import BlackScholesEngine
+            bs = BlackScholesEngine()
+            cal_dte = dte if (dte is not None and dte >= 0) else 5
+            T = max(1.0 / 365.0, cal_dte / 365.0)
+            sigma = (iv / 100.0) if (iv is not None and iv > 1.0) else (iv if (iv is not None and iv > 0) else 0.14)
+            estimated_premium = round(bs.price(spot_price, strike, T, sigma, option_type), 2)
+            greeks = bs.greeks(spot_price, strike, T, sigma, option_type)
+            delta = round(greeks["delta"], 2)
+            theta = round(greeks["theta"], 2)
+            gamma = round(greeks["gamma"], 5)
+            vega = round(greeks["vega"], 2)
+        except Exception:
+            moneyness = (spot_price - strike) if option_type == "CE" else (strike - spot_price)
+            intrinsic = max(0.0, moneyness)
+            extrinsic = max(15.0, 60.0 * ((dte if dte is not None else 5) / 7.0))
+            estimated_premium = round(intrinsic + extrinsic, 2)
+            raw_delta = round(max(0.10, min(0.95, 0.50 + (0.002 * moneyness))), 2)
+            delta = -raw_delta if option_type == "PE" else raw_delta
+            theta = -15.0
+            gamma = 0.0005
+            vega = 8.0
 
         # Theta risk evaluation
         if dte is not None and dte == 0:
@@ -116,9 +133,48 @@ class LiveContractSelector:
             lot_size=25,
             estimated_premium=estimated_premium,
             estimated_delta=delta,
+            estimated_theta=theta,
+            estimated_gamma=gamma,
+            estimated_vega=vega,
             estimated_spread_pts=0.60,
             theta_risk_level=theta_risk,
         )
+
+    def validate_option_profitability(
+        self,
+        contract: OptionContract,
+        underlying_spot: float,
+        underlying_target: float,
+        underlying_sl: float,
+        holding_hours: float = 1.5,
+    ) -> tuple[bool, str, float]:
+        """Verify whether expected underlying move can produce sufficient option premium move to justify costs."""
+        spot_move = abs(underlying_target - underlying_spot)
+        option_gross_gain = spot_move * abs(contract.estimated_delta)
+
+        # Theta decay drag during holding window
+        theta_decay = abs(contract.estimated_theta) * (holding_hours / 24.0)
+
+        # Spread & Slippage friction (round-trip)
+        spread_friction = contract.estimated_spread_pts * 2.0
+        slippage_pts = 0.50
+
+        # Net expected option points gain
+        net_option_pts = option_gross_gain - theta_decay - spread_friction - slippage_pts
+
+        # Option risk points
+        spot_risk = abs(underlying_spot - underlying_sl)
+        option_risk_pts = (spot_risk * abs(contract.estimated_delta)) + theta_decay + spread_friction
+
+        net_rr = net_option_pts / option_risk_pts if option_risk_pts > 0 else 0.0
+
+        if net_option_pts <= 2.0:
+            return False, f"Net expected option gain ({net_option_pts:.1f} pts) insufficient after theta (-{theta_decay:.1f} pts) & spread (-{spread_friction:.1f} pts).", net_rr
+
+        if net_rr < 1.3:
+            return False, f"Net Option R:R (1:{net_rr:.2f}) below 1:1.3 requirement after theta decay & execution costs.", net_rr
+
+        return True, f"Option trade viable: Net gain +{net_option_pts:.1f} pts (R:R 1:{net_rr:.2f}) after theta & friction.", net_rr
 
     def create_trade_plan(
         self,
