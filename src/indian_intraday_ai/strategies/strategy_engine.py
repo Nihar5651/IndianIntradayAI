@@ -799,14 +799,15 @@ class StrategySelectionEngine:
         orb_low: float | None = None,
         fakeout_info: Any = None,
     ) -> StrategySignal:
+        safe_atr = float(atr) if (atr is not None and not np.isnan(atr) and atr > 0) else 35.0
         # Check sideways / low vol first
         if regime in ("SIDEWAYS", "LOW_VOLATILITY", "EXPIRY_DAY_PIN", "UNCERTAIN"):
             # Check if there's a trap fader setup active even in sideways
             fader = FailedBreakoutReversalStrategy()
-            sig = fader.evaluate(df_5m, spot, regime, vwap, atr, nearest_support, nearest_resistance, daily_high, daily_low, daily_close, orb_high, orb_low, fakeout_info)
+            sig = fader.evaluate(df_5m, spot, regime, vwap, safe_atr, nearest_support, nearest_resistance, daily_high, daily_low, daily_close, orb_high, orb_low, fakeout_info)
             if sig.is_valid and sig.action in ("CALL", "PUT"):
                 return sig
-            return RangeBoundStrategy().evaluate(df_5m, spot, regime, vwap, atr, nearest_support, nearest_resistance, daily_high, daily_low, daily_close, orb_high, orb_low, fakeout_info)
+            return RangeBoundStrategy().evaluate(df_5m, spot, regime, vwap, safe_atr, nearest_support, nearest_resistance, daily_high, daily_low, daily_close, orb_high, orb_low, fakeout_info)
 
         # Dispatch through eligible strategies in priority order
         candidates: list[StrategySignal] = []
@@ -817,7 +818,7 @@ class StrategySelectionEngine:
                     spot=spot,
                     regime=regime,
                     vwap=vwap,
-                    atr=atr,
+                    atr=safe_atr,
                     nearest_support=nearest_support,
                     nearest_resistance=nearest_resistance,
                     daily_high=daily_high,

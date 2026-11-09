@@ -215,6 +215,10 @@ class ConfluenceStrategyEngine:
             return pd.DataFrame()
 
         df = pd.DataFrame(rows)
+        for col in ["open", "high", "low", "close", "volume"]:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
+        df = df.dropna(subset=["close"])
         if "timestamp" in df.columns:
             df["timestamp"] = pd.to_datetime(df["timestamp"])
             df = df.sort_values("timestamp").drop_duplicates(subset=["timestamp"], keep="last")
@@ -274,7 +278,7 @@ class ConfluenceStrategyEngine:
                 explanation="HOLD: Insufficient candle history or stale market feed. Engine refuses to speculate.",
             )
 
-        spot = spot_price if (spot_price and spot_price > 0) else float(df_5m["close"].iloc[-1])
+        spot = float(spot_price) if (spot_price and spot_price > 0) else (float(df_5m["close"].iloc[-1]) if not df_5m.empty and not pd.isna(df_5m["close"].iloc[-1]) else 25000.0)
 
         # -------------------------------------------------------------
         # Symmetric Evidence Accumulators
@@ -623,7 +627,7 @@ class ConfluenceStrategyEngine:
             daily_high=daily_high,
             daily_low=daily_low,
             daily_close=daily_close,
-            today_open=float(df_5m["open"].iloc[0]) if not df_5m.empty else None,
+            today_open=float(df_5m["open"].dropna().iloc[0]) if (not df_5m.empty and not df_5m["open"].dropna().empty) else None,
             dte=dte,
             is_fakeout=(not gate_fakeout_passed),
             fakeout_reason=breakout_eval.reason,
@@ -631,13 +635,15 @@ class ConfluenceStrategyEngine:
         )
         detected_regime = regime_eval.get("regime", "UNCERTAIN")
 
+        safe_atr = float(vol_report.atr) if (getattr(vol_report, 'atr', None) is not None and not np.isnan(vol_report.atr) and vol_report.atr > 0) else 35.0
+
         # Dynamic Strategy Dispatch
         strategy_sig = self.strategy_selector.select_and_evaluate(
             df_5m=df_5m,
             spot=spot,
             regime=detected_regime,
             vwap=vwap_val,
-            atr=vol_report.atr,
+            atr=safe_atr,
             nearest_support=nearest_sup_level,
             nearest_resistance=nearest_res_level,
             daily_high=daily_high,
@@ -671,7 +677,7 @@ class ConfluenceStrategyEngine:
 
         nearest_supp = sr_report.nearest_support.mid_price if sr_report.nearest_support else (spot - 40.0)
         nearest_res = sr_report.nearest_resistance.mid_price if sr_report.nearest_resistance else (spot + 40.0)
-        atr_val = max(vol_report.atr, 20.0)
+        atr_val = max(safe_atr, 20.0)
 
         # Setup parameters (use strategy signal levels if valid)
         gate_strategy_confirmed = strategy_sig.is_valid and strategy_sig.action in ("CALL", "PUT")

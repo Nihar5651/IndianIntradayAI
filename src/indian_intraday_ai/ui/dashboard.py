@@ -49,7 +49,7 @@ from indian_intraday_ai.market_analysis.regime_detector import MarketRegimeDetec
 from indian_intraday_ai.options.greeks_calculator import GreeksCalculator, OptionGreeks      # noqa: E402
 from indian_intraday_ai.market_data.option_chain_service import OptionChainService           # noqa: E402
 from indian_intraday_ai.broker.smartapi_market_data import SmartApiCredentials, SmartApiMarketData  # noqa: E402
-from indian_intraday_ai.signals.confluence_engine import ConfluenceStrategyEngine, ConfluenceDecision  # noqa: E402
+from indian_intraday_ai.signals.confluence_engine import ConfluenceStrategyEngine, ConfluenceDecision, ConditionItem  # noqa: E402
 
 log = logging.getLogger(__name__)
 
@@ -681,17 +681,22 @@ def _render_trade_recommendation(
             )
     except Exception as eval_err:
         log.exception("Confluence engine evaluation exception: %s", eval_err)
+        fallback_conds = []
+        try:
+            fallback_conds = [
+                ConditionItem("Engine Mode", f"Active Guard ({type(eval_err).__name__})", "SUPPORTIVE"),
+                ConditionItem("Derivatives Bias", f"{sentiment_str} (OI PCR: {_fmt(pcr_val)})", "SUPPORTIVE"),
+                ConditionItem("Execution Safety", "Capital Preservation Lock", "CONFIRMED"),
+            ]
+        except Exception:
+            fallback_conds = []
         decision = ConfluenceDecision(
             verdict="HOLD",
             confluence_score=52,
             bias=sentiment_str,
             score_breakdown={"multi_timeframe": 10, "market_structure": 12, "derivatives": 10, "volume_volatility": 10, "risk_reward": 10},
             hard_gates={"data_freshness": True, "liquidity_sweep_safe": True, "fakeout_detector_passed": False, "structural_sl_defined": True, "risk_reward_viable": False, "execution_viable": False, "all_passed": False},
-            conditions_matrix=[
-                ConditionItem("Engine Mode", f"Active Guard ({type(eval_err).__name__})", "SUPPORTIVE"),
-                ConditionItem("Derivatives Bias", f"{sentiment_str} (OI PCR: {_fmt(pcr_val)})", "SUPPORTIVE"),
-                ConditionItem("Execution Safety", "Capital Preservation Lock", "CONFIRMED"),
-            ],
+            conditions_matrix=fallback_conds,
             explanation=f"HOLD (Score: 52/100): Preserving capital. Dynamic safety locks active while processing incoming tick feeds. Awaiting breakout beyond {_safe_fmt(call_trigger, ',.1f', prefix='₹')} / {_safe_fmt(put_trigger, ',.1f', prefix='₹')}."
         )
 
