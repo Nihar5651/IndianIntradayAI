@@ -384,31 +384,36 @@ class ConfluenceStrategyEngine:
 
         if last_bos and last_bos.break_type == "BULLISH_BOS":
             bullish_struct += 9
-            bos_str = f"Bullish BOS confirmed at ₹{last_bos.level:,.1f}"
+            lvl_str = f"₹{last_bos.level:,.1f}" if (last_bos.level is not None and not np.isnan(last_bos.level)) else "N/A"
+            bos_str = f"Bullish BOS confirmed at {lvl_str}"
             bullish_evidence.append(bos_str)
         elif last_choch and last_choch.break_type == "BULLISH_CHOCH":
             bullish_struct += 6
-            bos_str = f"Bullish CHoCH reversal at ₹{last_choch.level:,.1f}"
+            lvl_str = f"₹{last_choch.level:,.1f}" if (last_choch.level is not None and not np.isnan(last_choch.level)) else "N/A"
+            bos_str = f"Bullish CHoCH reversal at {lvl_str}"
             bullish_evidence.append(bos_str)
 
         if last_bos and last_bos.break_type == "BEARISH_BOS":
             bearish_struct += 9
-            bos_str = f"Bearish BOS confirmed at ₹{last_bos.level:,.1f}"
+            lvl_str = f"₹{last_bos.level:,.1f}" if (last_bos.level is not None and not np.isnan(last_bos.level)) else "N/A"
+            bos_str = f"Bearish BOS confirmed at {lvl_str}"
             bearish_evidence.append(bos_str)
         elif last_choch and last_choch.break_type == "BEARISH_CHOCH":
             bearish_struct += 6
-            bos_str = f"Bearish CHoCH reversal at ₹{last_choch.level:,.1f}"
+            lvl_str = f"₹{last_choch.level:,.1f}" if (last_choch.level is not None and not np.isnan(last_choch.level)) else "N/A"
+            bos_str = f"Bearish CHoCH reversal at {lvl_str}"
             bearish_evidence.append(bos_str)
 
         # Swings classification (HH/HL or LH/LL) (8 pts)
         if struct_report.swings:
             last_swing = struct_report.swings[-1]
+            swing_lvl = f"₹{last_swing.price:,.1f}" if (last_swing.price is not None and not np.isnan(last_swing.price)) else "N/A"
             if last_swing.classification in ("HH", "HL"):
                 bullish_struct += 8
-                bullish_evidence.append(f"Structure: {last_swing.classification} at ₹{last_swing.price:,.1f}")
+                bullish_evidence.append(f"Structure: {last_swing.classification} at {swing_lvl}")
             elif last_swing.classification in ("LL", "LH"):
                 bearish_struct += 8
-                bearish_evidence.append(f"Structure: {last_swing.classification} at ₹{last_swing.price:,.1f}")
+                bearish_evidence.append(f"Structure: {last_swing.classification} at {swing_lvl}")
             else:
                 bullish_struct += 4
                 bearish_struct += 4
@@ -582,7 +587,8 @@ class ConfluenceStrategyEngine:
                 bullish_vol += 2
 
         # Volatility & Bollinger Squeeze state (6 pts)
-        vol_str = f"{vol_report.volatility_state} (ATR {vol_report.atr:.1f} pts)"
+        atr_str = f"{vol_report.atr:.1f}" if (getattr(vol_report, 'atr', None) is not None and not np.isnan(vol_report.atr)) else "N/A"
+        vol_str = f"{vol_report.volatility_state} (ATR {atr_str} pts)"
         vol_pts = 5 if vol_report.is_squeeze else (6 if vol_report.volatility_state in ("NORMAL", "HIGH") else 3)
         bullish_vol += vol_pts
         bearish_vol += vol_pts
@@ -784,8 +790,9 @@ class ConfluenceStrategyEngine:
             "all_passed": all_gates_passed,
         }
 
+        strike_fmt = f"{strike:,.0f}" if (strike is not None and not np.isnan(strike)) else "ATM"
         trade_setup = TradeSetup(
-            contract_symbol=f"NIFTY {strike:,.0f} {contract_type}",
+            contract_symbol=f"NIFTY {strike_fmt} {contract_type}",
             contract_type=contract_type,
             strike=strike,
             entry_trigger=entry_trigger,
@@ -799,6 +806,9 @@ class ConfluenceStrategyEngine:
         )
 
         # Final verdict selection
+        risk_str = f"{risk_pts:.1f}" if (risk_pts is not None and not np.isnan(risk_pts)) else "N/A"
+        min_rr_str = f"{self.min_reward_risk:.1f}" if (self.min_reward_risk is not None and not np.isnan(self.min_reward_risk)) else "1.5"
+
         if adj_bullish >= self.min_entry_score and adj_bullish > adj_bearish + 15 and all_gates_passed:
             verdict = "CALL"
             total_score = adj_bullish
@@ -838,9 +848,9 @@ class ConfluenceStrategyEngine:
             elif not gate_liquidity_sweep:
                 reasons.append("Active opposing liquidity sweep detected (trap risk).")
             if not gate_structural_sl:
-                reasons.append(f"Structural stop-loss distance ({risk_pts:.1f} pts) is outside acceptable bounds.")
+                reasons.append(f"Structural stop-loss distance ({risk_str} pts) is outside acceptable bounds.")
             if not gate_reward_risk:
-                reasons.append(f"Reward-to-risk ratio ({rr_str}) below minimum 1:{self.min_reward_risk:.1f} threshold.")
+                reasons.append(f"Reward-to-risk ratio ({rr_str}) below minimum 1:{min_rr_str} threshold.")
             if not gate_execution:
                 reasons.append(f"Option execution filter: {option_sens_report.summary}")
             if not option_profit_ok:
@@ -865,7 +875,7 @@ class ConfluenceStrategyEngine:
             ConditionItem("Fakeout Detector", f"Verified Clean ({detected_setup})" if gate_fakeout_passed else breakout_eval.breakout_type, "CONFIRMED" if gate_fakeout_passed else "CONFLICTING"),
             ConditionItem("Derivatives & Futures", f"{pcr_str} | Futures: {futures_pos_str}", "SUPPORTIVE" if deriv_report.confirms_spot else "CONFLICTING"),
             ConditionItem("Volume & Profile", f"{rvol_str} | {vp_str}", "CONFIRMED" if rvol >= 1.2 else "SUPPORTIVE"),
-            ConditionItem("Option & Risk Quality", f"{rr_str} (Risk: {risk_pts:.1f} pts) | Theta: {theta_txt}", "CONFIRMED" if (gate_reward_risk and gate_execution and option_profit_ok) else "CONFLICTING"),
+            ConditionItem("Option & Risk Quality", f"{rr_str} (Risk: {risk_str} pts) | Theta: {theta_txt}", "CONFIRMED" if (gate_reward_risk and gate_execution and option_profit_ok) else "CONFLICTING"),
         ]
 
         return ConfluenceDecision(

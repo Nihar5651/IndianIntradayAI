@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import sys
 import textwrap
 import time
@@ -422,26 +423,29 @@ def _greeks_signal_adjustment(
     g = best_strike
 
     # IV filter: avoid buying options when IV is extremely high (>35%)
-    if g.iv_pct > 35:
+    if getattr(g, "iv_pct", None) is not None and g.iv_pct > 35:
         if signal != "NO_TRADE":
             return "NO_TRADE", (
-                f"IV is very high ({g.iv_pct:.1f}%) — option premium too expensive for buyers. "
+                f"IV is very high ({_safe_fmt(g.iv_pct, '.1f', suffix='%')}) — option premium too expensive for buyers. "
                 "Wait for IV compression."
             )
 
     # Delta sanity: if chosen strike has very low delta, downgrade
-    if abs(g.delta) < 0.15:
+    if getattr(g, "delta", None) is not None and abs(g.delta) < 0.15:
         if signal != "NO_TRADE":
             return "NO_TRADE", (
-                f"Best strike Δ={g.delta:.2f} — too low delta, low probability of profit ({g.pop:.0f}%). "
+                f"Best strike Δ={_safe_fmt(g.delta, '.2f')} — too low delta, low probability of profit ({_safe_fmt(getattr(g, 'pop', None), '.0f', suffix='%')}). "
                 "No entry."
             )
 
     # POP sanity: very low POP = poor entry
-    if g.pop < 20 and signal != "NO_TRADE":
-        return "NO_TRADE", f"POP {g.pop:.0f}% too low for a directional entry."
+    if getattr(g, "pop", None) is not None and g.pop < 20 and signal != "NO_TRADE":
+        return "NO_TRADE", f"POP {_safe_fmt(g.pop, '.0f', suffix='%')} too low for a directional entry."
 
-    return signal, reason + f" | Greeks confirm: Δ={g.delta:.2f}, IV={g.iv_pct:.1f}%, POP={g.pop:.0f}%."
+    g_delta_str = _safe_fmt(getattr(g, "delta", None), ".2f")
+    g_iv_str = _safe_fmt(getattr(g, "iv_pct", None), ".1f", suffix="%")
+    g_pop_str = _safe_fmt(getattr(g, "pop", None), ".0f", suffix="%")
+    return signal, reason + f" | Greeks confirm: Δ={g_delta_str}, IV={g_iv_str}, POP={g_pop_str}."
 
 
 # ---------------------------------------------------------------------------
@@ -466,11 +470,33 @@ def _build_demo_chain(spot: float) -> pd.DataFrame:
         ])
     return pd.DataFrame(rows)
 
-def _fmt(v: float | None, suffix: str = "") -> str:
-    return "—" if v is None else f"{v:,.2f}{suffix}"
+def _safe_fmt(
+    v: Any,
+    fmt: str = ".2f",
+    prefix: str = "",
+    suffix: str = "",
+    default: str = "—",
+) -> str:
+    """Format any numeric value safely. If v is None, NaN, or non-numeric,
+    returns `default` without ever raising TypeError: unsupported format string passed to NoneType.
+    """
+    if v is None:
+        return default
+    try:
+        f_val = float(v)
+        if math.isnan(f_val):
+            return default
+        return f"{prefix}{f_val:{fmt}}{suffix}"
+    except (TypeError, ValueError, OverflowError):
+        return default
 
-def _fmt_pct(v: float | None) -> str:
-    return "—" if v is None else f"{v:.2f}%"
+
+def _fmt(v: Any, suffix: str = "") -> str:
+    return _safe_fmt(v, fmt=",.2f", suffix=suffix, default="—")
+
+
+def _fmt_pct(v: Any) -> str:
+    return _safe_fmt(v, fmt=".2f", suffix="%", default="—")
 
 
 def _render_html(html_str: str) -> None:
@@ -491,14 +517,14 @@ def _render_status(dqm: DataQualityMonitor) -> None:
     st.subheader("📡 Market Status")
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Status",         f"{icon} {name}")
-    c2.metric("NIFTY LTP",      f"₹{dqm.last_ltp:,.2f}" if dqm.last_ltp else "—")
+    c2.metric("NIFTY LTP",      _safe_fmt(dqm.last_ltp, ",.2f", prefix="₹", default="—"))
     c3.metric("Source",         "SmartAPI REST" if dqm.state not in (DataState.DEMO, DataState.DISCONNECTED) else "—")
     c4.metric("Exchange tick",  dqm.last_tick_ts.strftime("%H:%M:%S")   if dqm.last_tick_ts    else "—")
     c5.metric("Received at",    dqm.last_receive_ts.strftime("%H:%M:%S") if dqm.last_receive_ts else "—")
     if dqm.state == DataState.MARKET_CLOSED:
         note = "🔵 **Market closed.**"
         if dqm.last_ltp and dqm.last_tick_ts:
-            note += f"  Last valid price: **₹{dqm.last_ltp:,.2f}** at {dqm.last_tick_ts.strftime('%H:%M:%S IST')}."
+            note += f"  Last valid price: **{_safe_fmt(dqm.last_ltp, ',.2f', prefix='₹')}** at {dqm.last_tick_ts.strftime('%H:%M:%S IST')}."
         st.info(note)
     elif dqm.state == DataState.DEMO:
         st.warning("⚪ **DEMO mode** — Add SmartAPI secrets in Streamlit Cloud → Settings → Secrets.")
@@ -539,47 +565,50 @@ def _render_trade_recommendation(
     tech_indicators: dict[str, Any],
     history: list[float] | None = None,
 ) -> None:
-    regime_name = regime.get("regime", "UNCERTAIN")
-    regime_dir  = regime.get("direction", "UNKNOWN")
+    regime_name = regime.get("regime", "UNCERTAIN") if isinstance(regime, dict) else "UNCERTAIN"
+    regime_dir  = regime.get("direction", "UNKNOWN") if isinstance(regime, dict) else "UNKNOWN"
 
     # ── Pre-calculate entry triggers & risk levels for BOTH sides ──────
-    pe_support = chain_analysis.support_strike or (spot - 30.0)
-    ce_resist  = chain_analysis.resistance_strike or (spot + 30.0)
+    spot_val = float(spot) if spot is not None else 25_000.0
+    pe_support = float(chain_analysis.support_strike) if getattr(chain_analysis, "support_strike", None) is not None else (spot_val - 30.0)
+    ce_resist  = float(chain_analysis.resistance_strike) if getattr(chain_analysis, "resistance_strike", None) is not None else (spot_val + 30.0)
 
     # Standard NIFTY intraday wave is 50-70 points
-    target_wave = max(50.0, float(atr_pts))
+    target_wave = max(50.0, float(atr_pts)) if atr_pts is not None else 50.0
 
     # Breakout level: above resistance wall (or spot + 15 pts)
-    call_trigger = round(max(spot + max(15.0, 0.30 * target_wave), ce_resist + 15.0), 1)
-    call_sl      = round(spot - max(30.0, 0.65 * target_wave), 1)
+    call_trigger = round(max(spot_val + max(15.0, 0.30 * target_wave), ce_resist + 15.0), 1)
+    call_sl      = round(spot_val - max(30.0, 0.65 * target_wave), 1)
     call_t1      = round(call_trigger + target_wave, 1)
     call_t2      = round(call_trigger + 2.0 * target_wave, 1)
-    call_active  = spot >= call_trigger
+    call_active  = spot_val >= call_trigger
 
     # Breakdown level: below support wall (or spot - 15 pts)
-    put_trigger  = round(min(spot - max(15.0, 0.30 * target_wave), pe_support), 1)
-    put_sl       = round(spot + max(30.0, 0.65 * target_wave), 1)
+    put_trigger  = round(min(spot_val - max(15.0, 0.30 * target_wave), pe_support), 1)
+    put_sl       = round(spot_val + max(30.0, 0.65 * target_wave), 1)
     put_t1       = round(put_trigger - target_wave, 1)
     put_t2       = round(put_trigger - 2.0 * target_wave, 1)
-    put_active   = spot <= put_trigger
+    put_active   = spot_val <= put_trigger
 
     # ── 1. Live Technical & Derivatives Indicators Bar ─────────────────
     st.subheader("📈 Live Technical & Market Structure Indicators")
     i1, i2, i3, i4, i5, i6 = st.columns(6)
-    i1.metric("RSI (14)", f"{tech_indicators['rsi']:.1f}", tech_indicators["rsi_zone"])
-    i2.metric("OI PCR", _fmt(chain_analysis.put_call_oi_ratio), chain_analysis.sentiment)
-    i3.metric("Volume PCR", _fmt(chain_analysis.put_call_volume_ratio))
-    i4.metric("Max Pain Strike", _fmt(chain_analysis.max_pain_strike))
-    i5.metric("PE Major Support", _fmt(chain_analysis.support_strike))
-    i6.metric("CE Major Resist", _fmt(chain_analysis.resistance_strike))
+    rsi_val = tech_indicators.get("rsi") if isinstance(tech_indicators, dict) else getattr(tech_indicators, "rsi", None)
+    rsi_zone = str(tech_indicators.get("rsi_zone", "Neutral") if isinstance(tech_indicators, dict) else "Neutral")
+    i1.metric("RSI (14)", _safe_fmt(rsi_val, ".1f"), rsi_zone)
+    i2.metric("OI PCR", _fmt(getattr(chain_analysis, "put_call_oi_ratio", None)), str(getattr(chain_analysis, "sentiment", "NEUTRAL") or "NEUTRAL"))
+    i3.metric("Volume PCR", _fmt(getattr(chain_analysis, "put_call_volume_ratio", None)))
+    i4.metric("Max Pain Strike", _fmt(getattr(chain_analysis, "max_pain_strike", None)))
+    i5.metric("PE Major Support", _fmt(getattr(chain_analysis, "support_strike", None)))
+    i6.metric("CE Major Resist", _fmt(getattr(chain_analysis, "resistance_strike", None)))
 
     st.divider()
 
     # ── 2. FINAL AI OUTPUT & ACTION CARD (5-LAYER CONFLUENCE) ──────────
     st.subheader("🎯 Official Final AI Output & Action Decision")
 
-    pcr_val = chain_analysis.put_call_oi_ratio or 0.0
-    sentiment_str = (chain_analysis.sentiment or "NEUTRAL").upper()
+    pcr_val = getattr(chain_analysis, "put_call_oi_ratio", None)
+    sentiment_str = str(getattr(chain_analysis, "sentiment", "NEUTRAL") or "NEUTRAL").upper()
 
     # Dynamic badge titles matching actual derivative bias
     if sentiment_str == "BULLISH":
@@ -613,7 +642,7 @@ def _render_trade_recommendation(
             five_minute_candles=c5 if len(c5) >= 3 else None,
             one_minute_candles=c1 or None,
             fifteen_minute_candles=c15 or None,
-            spot_price=spot,
+            spot_price=spot_val,
             option_chain_data=chain_analysis,
         )
     elif len(hist) >= 5:
@@ -628,7 +657,7 @@ def _render_trade_recommendation(
         })
         decision = conf_engine.evaluate(
             five_minute_candles=synth_df,
-            spot_price=spot,
+            spot_price=spot_val,
             option_chain_data=chain_analysis,
         )
     else:
@@ -647,46 +676,49 @@ def _render_trade_recommendation(
         verdict_badge = "🟢 HIGH CONFLUENCE CALL"
         verdict_color = "#34d399"
         verdict_title = f"BUY CALL (SCORE: {decision.confluence_score}/100)"
-        verdict_desc = f"NIFTY spot (₹{spot:,.2f}) has confirmed bullish structure and all 5 hard safety gates passed."
+        verdict_desc = f"NIFTY spot ({_safe_fmt(spot_val, ',.2f', prefix='₹')}) has confirmed bullish structure and all 5 hard safety gates passed."
         hero_border = "#10b981"
         hero_glow = "rgba(16, 185, 129, 0.35)"
     elif decision.verdict == "PUT":
         verdict_badge = "🔴 HIGH CONFLUENCE PUT"
         verdict_color = "#f87171"
         verdict_title = f"BUY PUT (SCORE: {decision.confluence_score}/100)"
-        verdict_desc = f"NIFTY spot (₹{spot:,.2f}) has confirmed bearish breakdown and all 5 hard safety gates passed."
+        verdict_desc = f"NIFTY spot ({_safe_fmt(spot_val, ',.2f', prefix='₹')}) has confirmed bearish breakdown and all 5 hard safety gates passed."
         hero_border = "#ef4444"
         hero_glow = "rgba(239, 68, 68, 0.35)"
     else:
         verdict_badge = "⏸️ CAPITAL PRESERVATION HOLD"
         verdict_color = "#38bdf8"
         verdict_title = f"HOLD (SCORE: {decision.confluence_score}/100)"
+        pcr_disp = _safe_fmt(pcr_val, ".2f", default="N/A")
         verdict_desc = (
-            f"Spot (₹{spot:,.2f}) is in a {channel_pts:,.0f}-pt consolidation channel (₹{put_trigger:,.1f} – ₹{call_trigger:,.1f}). "
-            f"Derivatives Bias is <strong>{sentiment_str} (OI PCR: {pcr_val:.2f})</strong>. Confluence threshold (<75) or hard gate active. Pre-set breakout orders are armed below."
+            f"Spot ({_safe_fmt(spot_val, ',.2f', prefix='₹')}) is in a {_safe_fmt(channel_pts, ',.0f')}-pt consolidation channel ({_safe_fmt(put_trigger, ',.1f', prefix='₹')} – {_safe_fmt(call_trigger, ',.1f', prefix='₹')}). "
+            f"Derivatives Bias is <strong>{sentiment_str} (OI PCR: {pcr_disp})</strong>. Confluence threshold (<75) or hard gate active. Pre-set breakout orders are armed below."
         )
         hero_border = "#6366f1"
         hero_glow = "rgba(99, 102, 241, 0.25)"
 
-    ce_name = f"NIFTY {best_ce.strike:,.0f} CE" if best_ce else "ATM CE"
-    pe_name = f"NIFTY {best_pe.strike:,.0f} PE" if best_pe else "ATM PE"
-    ce_price = f"₹{best_ce.market_price:.2f}" if best_ce else "—"
-    pe_price = f"₹{best_pe.market_price:.2f}" if best_pe else "—"
+    ce_strike_str = _safe_fmt(getattr(best_ce, 'strike', None), ",.0f") if best_ce else None
+    pe_strike_str = _safe_fmt(getattr(best_pe, 'strike', None), ",.0f") if best_pe else None
+    ce_name = f"NIFTY {ce_strike_str} CE" if ce_strike_str and ce_strike_str != "—" else "ATM CE"
+    pe_name = f"NIFTY {pe_strike_str} PE" if pe_strike_str and pe_strike_str != "—" else "ATM PE"
+    ce_price = _safe_fmt(getattr(best_ce, 'market_price', None), ".2f", prefix="₹", default="—")
+    pe_price = _safe_fmt(getattr(best_pe, 'market_price', None), ".2f", prefix="₹", default="—")
 
     # Dynamic target premium calculation from Delta
-    if best_pe and best_pe.market_price > 0:
+    if best_pe and getattr(best_pe, 'market_price', None) is not None and getattr(best_pe, 'delta', None) is not None and best_pe.market_price > 0:
         pe_delta_mag = max(0.25, abs(best_pe.delta))
         pe_gain_t1   = abs(put_trigger - put_t1) * pe_delta_mag
         pe_t1_prem   = round(best_pe.market_price + pe_gain_t1, 2)
-        pe_target_str = f"Target 1 Option: ~₹{pe_t1_prem:.2f} (+₹{pe_gain_t1:.1f})"
+        pe_target_str = f"Target 1 Option: ~{_safe_fmt(pe_t1_prem, '.2f', prefix='₹')} (+{_safe_fmt(pe_gain_t1, '.1f', prefix='₹')})"
     else:
         pe_target_str = f"Target 1: Spot -{abs(put_trigger - put_t1):.0f} pts"
 
-    if best_ce and best_ce.market_price > 0:
+    if best_ce and getattr(best_ce, 'market_price', None) is not None and getattr(best_ce, 'delta', None) is not None and best_ce.market_price > 0:
         ce_delta_mag = max(0.25, abs(best_ce.delta))
         ce_gain_t1   = abs(call_t1 - call_trigger) * ce_delta_mag
         ce_t1_prem   = round(best_ce.market_price + ce_gain_t1, 2)
-        ce_target_str = f"Target 1 Option: ~₹{ce_t1_prem:.2f} (+₹{ce_gain_t1:.1f})"
+        ce_target_str = f"Target 1 Option: ~{_safe_fmt(ce_t1_prem, '.2f', prefix='₹')} (+{_safe_fmt(ce_gain_t1, '.1f', prefix='₹')})"
     else:
         ce_target_str = f"Target 1: Spot +{abs(call_t1 - call_trigger):.0f} pts"
 
@@ -724,7 +756,7 @@ def _render_trade_recommendation(
                 ⚡ 5-LAYER CONFLUENCE MODEL · SCORE: {decision.confluence_score} / 100
             </span>
             <span style='color:#94a3b8; font-size:0.85rem; font-family:monospace;'>
-                SPOT: ₹{spot:,.2f} · OI PCR: {_fmt(chain_analysis.put_call_oi_ratio)} · BIAS: {sentiment_str}
+                SPOT: {_safe_fmt(spot_val, ',.2f', prefix='₹')} · OI PCR: {_fmt(getattr(chain_analysis, 'put_call_oi_ratio', None))} · BIAS: {sentiment_str}
             </span>
         </div>
 
@@ -772,19 +804,19 @@ def _render_trade_recommendation(
                 <div style='display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin-top:12px;'>
                     <div style='background:rgba(0,0,0,0.3); padding:8px 10px; border-radius:6px;'>
                         <div style='color:#9ca3af; font-size:0.75rem;'>ENTRY TRIGGER</div>
-                        <div style='color:#ef4444; font-size:1.15rem; font-weight:800;'>Below ₹{put_trigger:,.1f}</div>
+                        <div style='color:#ef4444; font-size:1.15rem; font-weight:800;'>Below {_safe_fmt(put_trigger, ',.1f', prefix='₹')}</div>
                     </div>
                     <div style='background:rgba(0,0,0,0.3); padding:8px 10px; border-radius:6px;'>
                         <div style='color:#9ca3af; font-size:0.75rem;'>STOP LOSS (SL)</div>
-                        <div style='color:#f87171; font-size:1.15rem; font-weight:800;'>₹{put_sl:,.1f}</div>
+                        <div style='color:#f87171; font-size:1.15rem; font-weight:800;'>{_safe_fmt(put_sl, ',.1f', prefix='₹')}</div>
                     </div>
                     <div style='background:rgba(0,0,0,0.3); padding:8px 10px; border-radius:6px;'>
                         <div style='color:#9ca3af; font-size:0.75rem;'>TARGET 1</div>
-                        <div style='color:#34d399; font-size:1.15rem; font-weight:800;'>₹{put_t1:,.1f}</div>
+                        <div style='color:#34d399; font-size:1.15rem; font-weight:800;'>{_safe_fmt(put_t1, ',.1f', prefix='₹')}</div>
                     </div>
                     <div style='background:rgba(0,0,0,0.3); padding:8px 10px; border-radius:6px;'>
                         <div style='color:#9ca3af; font-size:0.75rem;'>TARGET 2</div>
-                        <div style='color:#34d399; font-size:1.15rem; font-weight:800;'>₹{put_t2:,.1f}</div>
+                        <div style='color:#34d399; font-size:1.15rem; font-weight:800;'>{_safe_fmt(put_t2, ',.1f', prefix='₹')}</div>
                     </div>
                 </div>
                 <div style='margin-top:10px; color:#9ca3af; font-size:0.8rem;'>Risk:Reward: <strong style='color:#ffffff;'>1 : 2.5+</strong> &nbsp;|&nbsp; {pe_target_str}</div>
@@ -803,19 +835,19 @@ def _render_trade_recommendation(
                 <div style='display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin-top:12px;'>
                     <div style='background:rgba(0,0,0,0.3); padding:8px 10px; border-radius:6px;'>
                         <div style='color:#9ca3af; font-size:0.75rem;'>ENTRY TRIGGER</div>
-                        <div style='color:#10b981; font-size:1.15rem; font-weight:800;'>Above ₹{call_trigger:,.1f}</div>
+                        <div style='color:#10b981; font-size:1.15rem; font-weight:800;'>Above {_safe_fmt(call_trigger, ',.1f', prefix='₹')}</div>
                     </div>
                     <div style='background:rgba(0,0,0,0.3); padding:8px 10px; border-radius:6px;'>
                         <div style='color:#9ca3af; font-size:0.75rem;'>STOP LOSS (SL)</div>
-                        <div style='color:#f87171; font-size:1.15rem; font-weight:800;'>₹{call_sl:,.1f}</div>
+                        <div style='color:#f87171; font-size:1.15rem; font-weight:800;'>{_safe_fmt(call_sl, ',.1f', prefix='₹')}</div>
                     </div>
                     <div style='background:rgba(0,0,0,0.3); padding:8px 10px; border-radius:6px;'>
                         <div style='color:#9ca3af; font-size:0.75rem;'>TARGET 1</div>
-                        <div style='color:#34d399; font-size:1.15rem; font-weight:800;'>₹{call_t1:,.1f}</div>
+                        <div style='color:#34d399; font-size:1.15rem; font-weight:800;'>{_safe_fmt(call_t1, ',.1f', prefix='₹')}</div>
                     </div>
                     <div style='background:rgba(0,0,0,0.3); padding:8px 10px; border-radius:6px;'>
                         <div style='color:#9ca3af; font-size:0.75rem;'>TARGET 2</div>
-                        <div style='color:#34d399; font-size:1.15rem; font-weight:800;'>₹{call_t2:,.1f}</div>
+                        <div style='color:#34d399; font-size:1.15rem; font-weight:800;'>{_safe_fmt(call_t2, ',.1f', prefix='₹')}</div>
                     </div>
                 </div>
                 <div style='margin-top:10px; color:#9ca3af; font-size:0.8rem;'>Risk:Reward: <strong style='color:#ffffff;'>1 : 2.0+</strong> &nbsp;|&nbsp; {ce_target_str}</div>
@@ -824,7 +856,7 @@ def _render_trade_recommendation(
         </div>
 
         <div style='background:rgba(245, 158, 11, 0.1); border:1px solid rgba(245, 158, 11, 0.4); border-radius:8px; padding:10px 14px; margin-top:16px; color:#fde68a; font-size:0.88rem;'>
-            ⚠️ <strong>Golden Execution Rule:</strong> Do NOT enter market orders blind inside the ₹{put_trigger:,.0f} – ₹{call_trigger:,.0f} channel to avoid Theta decay. Enter strictly on 5-minute candle confirmation and always keep the Stop Loss active.
+            ⚠️ <strong>Golden Execution Rule:</strong> Do NOT enter market orders blind inside the {_safe_fmt(put_trigger, ',.0f', prefix='₹')} – {_safe_fmt(call_trigger, ',.0f', prefix='₹')} channel to avoid Theta decay. Enter strictly on 5-minute candle confirmation and always keep the Stop Loss active.
         </div>
 
     </div>
@@ -841,7 +873,7 @@ def _render_trade_recommendation(
     with col_call:
         call_badge_bg = "#065f46" if call_active else "#374151"
         call_badge_color = "#34d399" if call_active else "#d1d5db"
-        call_badge_text = "🟢 TRIGGER ACTIVE (IN PLAY)" if call_active else f"⏳ AWAITING BREAKOUT (> ₹{call_trigger:,.1f})"
+        call_badge_text = "🟢 TRIGGER ACTIVE (IN PLAY)" if call_active else f"⏳ AWAITING BREAKOUT (> {_safe_fmt(call_trigger, ',.1f', prefix='₹')})"
 
         _render_html(
             f"<div style='background: linear-gradient(180deg, rgba(16, 185, 129, 0.12) 0%, rgba(17, 24, 39, 0.95) 100%);"
@@ -857,23 +889,23 @@ def _render_trade_recommendation(
         if best_ce:
             ce = best_ce
             cm1, cm2, cm3 = st.columns(3)
-            cm1.metric("Recommended Strike", f"₹{ce.strike:,.0f} CE")
-            cm2.metric("Option Premium", f"₹{ce.market_price:.2f}")
-            cm3.metric("B-S Model Fair Price", f"₹{ce.model_price:.2f}")
+            cm1.metric("Recommended Strike", f"{_safe_fmt(ce.strike, ',.0f', prefix='₹')} CE")
+            cm2.metric("Option Premium", _safe_fmt(ce.market_price, ".2f", prefix="₹"))
+            cm3.metric("B-S Model Fair Price", _safe_fmt(ce.model_price, ".2f", prefix="₹"))
 
             ct1, ct2, ct3 = st.columns(3)
-            ct1.metric("Entry Trigger (Spot)", f"₹{call_trigger:,.1f}")
-            ct2.metric("Stop Loss (Spot)", f"₹{call_sl:,.1f}", f"-₹{abs(spot - call_sl):.1f} pts", delta_color="inverse")
-            ct3.metric("Target 1 (Spot)", f"₹{call_t1:,.1f}", f"+₹{abs(call_t1 - spot):.1f} pts")
+            ct1.metric("Entry Trigger (Spot)", _safe_fmt(call_trigger, ",.1f", prefix="₹"))
+            ct2.metric("Stop Loss (Spot)", _safe_fmt(call_sl, ",.1f", prefix="₹"), f"-{_safe_fmt(abs(spot_val - call_sl), '.1f', prefix='₹')} pts", delta_color="inverse")
+            ct3.metric("Target 1 (Spot)", _safe_fmt(call_t1, ",.1f", prefix="₹"), f"+{_safe_fmt(abs(call_t1 - spot_val), '.1f', prefix='₹')} pts")
 
             st.caption("⚡ **Option Greeks (CALL)**")
             cg1, cg2, cg3, cg4, cg5, cg6 = st.columns(6)
-            cg1.metric("Delta (Δ)", f"{ce.delta:+.3f}")
-            cg2.metric("Gamma (Γ)", f"{ce.gamma:.5f}")
-            cg3.metric("Theta (Θ)/d", f"₹{ce.theta:.2f}")
-            cg4.metric("Vega (ν)", f"₹{ce.vega:.2f}")
-            cg5.metric("IV", f"{ce.iv_pct:.1f}%")
-            cg6.metric("POP", f"{ce.pop:.0f}%")
+            cg1.metric("Delta (Δ)", _safe_fmt(ce.delta, "+.3f"))
+            cg2.metric("Gamma (Γ)", _safe_fmt(ce.gamma, ".5f"))
+            cg3.metric("Theta (Θ)/d", _safe_fmt(ce.theta, ".2f", prefix="₹"))
+            cg4.metric("Vega (ν)", _safe_fmt(ce.vega, ".2f", prefix="₹"))
+            cg5.metric("IV", _safe_fmt(ce.iv_pct, ".1f", suffix="%"))
+            cg6.metric("POP", _safe_fmt(ce.pop, ".0f", suffix="%"))
         else:
             st.warning("No optimal CALL contract found in chain.")
 
@@ -881,7 +913,7 @@ def _render_trade_recommendation(
     with col_put:
         put_badge_bg = "#7f1d1d" if put_active else "#374151"
         put_badge_color = "#f87171" if put_active else "#d1d5db"
-        put_badge_text = "🔴 TRIGGER ACTIVE (IN PLAY)" if put_active else f"⏳ AWAITING BREAKDOWN (< ₹{put_trigger:,.1f})"
+        put_badge_text = "🔴 TRIGGER ACTIVE (IN PLAY)" if put_active else f"⏳ AWAITING BREAKDOWN (< {_safe_fmt(put_trigger, ',.1f', prefix='₹')})"
 
         _render_html(
             f"<div style='background: linear-gradient(180deg, rgba(239, 68, 68, 0.12) 0%, rgba(17, 24, 39, 0.95) 100%);"
@@ -897,23 +929,23 @@ def _render_trade_recommendation(
         if best_pe:
             pe = best_pe
             pm1, pm2, pm3 = st.columns(3)
-            pm1.metric("Recommended Strike", f"₹{pe.strike:,.0f} PE")
-            pm2.metric("Option Premium", f"₹{pe.market_price:.2f}")
-            pm3.metric("B-S Model Fair Price", f"₹{pe.model_price:.2f}")
+            pm1.metric("Recommended Strike", f"{_safe_fmt(pe.strike, ',.0f', prefix='₹')} PE")
+            pm2.metric("Option Premium", _safe_fmt(pe.market_price, ".2f", prefix="₹"))
+            pm3.metric("B-S Model Fair Price", _safe_fmt(pe.model_price, ".2f", prefix="₹"))
 
             pt1, pt2, pt3 = st.columns(3)
-            pt1.metric("Entry Trigger (Spot)", f"₹{put_trigger:,.1f}")
-            pt2.metric("Stop Loss (Spot)", f"₹{put_sl:,.1f}", f"+₹{abs(put_sl - spot):.1f} pts", delta_color="inverse")
-            pt3.metric("Target 1 (Spot)", f"₹{put_t1:,.1f}", f"-₹{abs(spot - put_t1):.1f} pts")
+            pt1.metric("Entry Trigger (Spot)", _safe_fmt(put_trigger, ",.1f", prefix="₹"))
+            pt2.metric("Stop Loss (Spot)", _safe_fmt(put_sl, ",.1f", prefix="₹"), f"+{_safe_fmt(abs(put_sl - spot_val), '.1f', prefix='₹')} pts", delta_color="inverse")
+            pt3.metric("Target 1 (Spot)", _safe_fmt(put_t1, ",.1f", prefix="₹"), f"-{_safe_fmt(abs(spot_val - put_t1), '.1f', prefix='₹')} pts")
 
             st.caption("⚡ **Option Greeks (PUT)**")
             pg1, pg2, pg3, pg4, pg5, pg6 = st.columns(6)
-            pg1.metric("Delta (Δ)", f"{pe.delta:.3f}")
-            pg2.metric("Gamma (Γ)", f"{pe.gamma:.5f}")
-            pg3.metric("Theta (Θ)/d", f"₹{pe.theta:.2f}")
-            pg4.metric("Vega (ν)", f"₹{pe.vega:.2f}")
-            pg5.metric("IV", f"{pe.iv_pct:.1f}%")
-            pg6.metric("POP", f"{pe.pop:.0f}%")
+            pg1.metric("Delta (Δ)", _safe_fmt(pe.delta, ".3f"))
+            pg2.metric("Gamma (Γ)", _safe_fmt(pe.gamma, ".5f"))
+            pg3.metric("Theta (Θ)/d", _safe_fmt(pe.theta, ".2f", prefix="₹"))
+            pg4.metric("Vega (ν)", _safe_fmt(pe.vega, ".2f", prefix="₹"))
+            pg5.metric("IV", _safe_fmt(pe.iv_pct, ".1f", suffix="%"))
+            pg6.metric("POP", _safe_fmt(pe.pop, ".0f", suffix="%"))
         else:
             st.warning("No optimal PUT contract found in chain.")
 
@@ -922,24 +954,26 @@ def _render_trade_recommendation(
     # ── 4. Greeks Sensitivity & Execution Checklist ─────────────────────
     if best_ce and best_pe:
         with st.expander("📖 Greeks Sensitivity & Risk Management Checklist"):
-            ce_decay = abs(best_ce.theta)
-            pe_decay = abs(best_pe.theta)
-            ce_breakeven = ce_decay / max(abs(best_ce.delta), 0.01)
-            pe_breakeven = pe_decay / max(abs(best_pe.delta), 0.01)
+            ce_decay = abs(best_ce.theta) if getattr(best_ce, 'theta', None) is not None else 0.0
+            pe_decay = abs(best_pe.theta) if getattr(best_pe, 'theta', None) is not None else 0.0
+            ce_delta_val = abs(best_ce.delta) if getattr(best_ce, 'delta', None) is not None else 0.0
+            pe_delta_val = abs(best_pe.delta) if getattr(best_pe, 'delta', None) is not None else 0.0
+            ce_breakeven = ce_decay / max(ce_delta_val, 0.01)
+            pe_breakeven = pe_decay / max(pe_delta_val, 0.01)
 
             st.markdown(f"""
-| Metric | 📞 CALL ({best_ce.strike:,.0f} CE) | 📉 PUT ({best_pe.strike:,.0f} PE) | Professional Guidance |
+| Metric | 📞 CALL ({_safe_fmt(best_ce.strike, ',.0f')} CE) | 📉 PUT ({_safe_fmt(best_pe.strike, ',.0f')} PE) | Professional Guidance |
 |---|---|---|---|
-| **Delta (Δ)** | {best_ce.delta:+.3f} | {best_pe.delta:.3f} | Target 0.30–0.50 range for high intraday leverage with controlled risk |
-| **Implied Volatility (IV)** | {best_ce.iv_pct:.1f}% | {best_pe.iv_pct:.1f}% | Cheaper premium when IV < 20%; avoid buying when IV > 30% |
-| **Probability of Profit (POP)** | {best_ce.pop:.0f}% | {best_pe.pop:.0f}% | Estimated statistical odds of finishing in-the-money at expiry |
-| **Theta Decay / Day** | -₹{ce_decay:.2f} | -₹{pe_decay:.2f} | Premium eroded per calendar day held (zero on intraday scalp) |
-| **Vega / 1% IV Move** | ₹{best_ce.vega:.2f} | ₹{best_pe.vega:.2f} | Premium gain if market IV spikes by 1% |
-| **Spot Breakeven Move** | ≥ ₹{ce_breakeven:.0f} pts | ≥ ₹{pe_breakeven:.0f} pts | Daily spot move needed solely to offset Theta time decay |
+| **Delta (Δ)** | {_safe_fmt(best_ce.delta, '+.3f')} | {_safe_fmt(best_pe.delta, '.3f')} | Target 0.30–0.50 range for high intraday leverage with controlled risk |
+| **Implied Volatility (IV)** | {_safe_fmt(best_ce.iv_pct, '.1f', suffix='%')} | {_safe_fmt(best_pe.iv_pct, '.1f', suffix='%')} | Cheaper premium when IV < 20%; avoid buying when IV > 30% |
+| **Probability of Profit (POP)** | {_safe_fmt(best_ce.pop, '.0f', suffix='%')} | {_safe_fmt(best_pe.pop, '.0f', suffix='%')} | Estimated statistical odds of finishing in-the-money at expiry |
+| **Theta Decay / Day** | -{_safe_fmt(ce_decay, '.2f', prefix='₹')} | -{_safe_fmt(pe_decay, '.2f', prefix='₹')} | Premium eroded per calendar day held (zero on intraday scalp) |
+| **Vega / 1% IV Move** | {_safe_fmt(best_ce.vega, '.2f', prefix='₹')} | {_safe_fmt(best_pe.vega, '.2f', prefix='₹')} | Premium gain if market IV spikes by 1% |
+| **Spot Breakeven Move** | ≥ {_safe_fmt(ce_breakeven, '.0f', prefix='₹')} pts | ≥ {_safe_fmt(pe_breakeven, '.0f', prefix='₹')} pts | Daily spot move needed solely to offset Theta time decay |
 
 **Core Risk Rules:**
-- **Entry Confirmation:** Enter CALL only on sustained 1-min / 3-min close above ₹{call_trigger:,.1f}; enter PUT only on close below ₹{put_trigger:,.1f}.
-- **Invalidation:** Strictly exit if spot hits Stop Loss (₹{call_sl:,.1f} for CALL / ₹{put_sl:,.1f} for PUT).
+- **Entry Confirmation:** Enter CALL only on sustained 1-min / 3-min close above {_safe_fmt(call_trigger, ',.1f', prefix='₹')}; enter PUT only on close below {_safe_fmt(put_trigger, ',.1f', prefix='₹')}.
+- **Invalidation:** Strictly exit if spot hits Stop Loss ({_safe_fmt(call_sl, ',.1f', prefix='₹')} for CALL / {_safe_fmt(put_sl, ',.1f', prefix='₹')} for PUT).
 - **Target Partial Booking:** Book 50% at Target 1 and trail stop to entry trigger.
 """)
 
@@ -947,9 +981,9 @@ def _render_trade_recommendation(
     if all_greeks:
         with st.expander("📋 Full Option Chain Greeks Table (Live Strikes & Fair Values)"):
             table_rows = []
-            for g in sorted(all_greeks, key=lambda x: (x.strike, 0 if x.option_type == "CE" else 1)):
-                is_best_ce = best_ce and g.strike == best_ce.strike and g.option_type == "CE"
-                is_best_pe = best_pe and g.strike == best_pe.strike and g.option_type == "PE"
+            for g in sorted(all_greeks, key=lambda x: (float(x.strike) if getattr(x, "strike", None) is not None else 0.0, 0 if getattr(x, "option_type", "") == "CE" else 1)):
+                is_best_ce = best_ce and g.strike == getattr(best_ce, 'strike', None) and g.option_type == "CE"
+                is_best_pe = best_pe and g.strike == getattr(best_pe, 'strike', None) and g.option_type == "PE"
 
                 if is_best_ce:
                     bg = "background-color: #064e3b; font-weight: bold; color: #34d399;"
@@ -961,17 +995,17 @@ def _render_trade_recommendation(
                 type_icon = "📞 CE" if g.option_type == "CE" else "📉 PE"
                 table_rows.append(
                     f"<tr style='{bg} border-bottom: 1px solid #1f2937;'>"
-                    f"<td style='padding:6px 10px; font-weight:600;'>{g.strike:,.0f}</td>"
+                    f"<td style='padding:6px 10px; font-weight:600;'>{_safe_fmt(g.strike, ',.0f')}</td>"
                     f"<td style='padding:6px 10px;'>{type_icon}</td>"
-                    f"<td style='padding:6px 10px; font-weight:600;'>₹{g.market_price:.2f}</td>"
-                    f"<td style='padding:6px 10px;'>₹{g.model_price:.2f}</td>"
-                    f"<td style='padding:6px 10px;'>{g.delta:+.3f}</td>"
-                    f"<td style='padding:6px 10px;'>{g.gamma:.5f}</td>"
-                    f"<td style='padding:6px 10px; color:#ef4444;'>₹{g.theta:.2f}</td>"
-                    f"<td style='padding:6px 10px;'>₹{g.vega:.2f}</td>"
-                    f"<td style='padding:6px 10px;'>{g.iv_pct:.1f}%</td>"
-                    f"<td style='padding:6px 10px; color:#10b981;'>{g.pop:.0f}%</td>"
-                    f"<td style='padding:6px 10px;'>{g.moneyness}</td>"
+                    f"<td style='padding:6px 10px; font-weight:600;'>{_safe_fmt(g.market_price, '.2f', prefix='₹')}</td>"
+                    f"<td style='padding:6px 10px;'>{_safe_fmt(g.model_price, '.2f', prefix='₹')}</td>"
+                    f"<td style='padding:6px 10px;'>{_safe_fmt(g.delta, '+.3f')}</td>"
+                    f"<td style='padding:6px 10px;'>{_safe_fmt(g.gamma, '.5f')}</td>"
+                    f"<td style='padding:6px 10px; color:#ef4444;'>{_safe_fmt(g.theta, '.2f', prefix='₹')}</td>"
+                    f"<td style='padding:6px 10px;'>{_safe_fmt(g.vega, '.2f', prefix='₹')}</td>"
+                    f"<td style='padding:6px 10px;'>{_safe_fmt(g.iv_pct, '.1f', suffix='%')}</td>"
+                    f"<td style='padding:6px 10px; color:#10b981;'>{_safe_fmt(g.pop, '.0f', suffix='%')}</td>"
+                    f"<td style='padding:6px 10px;'>{g.moneyness or '—'}</td>"
                     f"</tr>"
                 )
 
