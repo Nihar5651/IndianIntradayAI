@@ -102,7 +102,7 @@ class BaseStrategy:
 # ============================================================================
 class TrendContinuationStrategy(BaseStrategy):
     name = "TREND_CONTINUATION"
-    suitable_regimes = ("STRONG_BULLISH", "STRONG_BEARISH")
+    suitable_regimes = ("STRONG_BULLISH", "STRONG_BEARISH", "WEAK_BULLISH", "WEAK_BEARISH", "TREND_FOLLOWING")
     min_rr = 1.5
 
     def evaluate(
@@ -133,14 +133,17 @@ class TrendContinuationStrategy(BaseStrategy):
         ema9 = float(df_5m["close"].ewm(span=9, adjust=False).mean().iloc[-1])
         ema21 = float(df_5m["close"].ewm(span=21, adjust=False).mean().iloc[-1])
 
-        if regime == "STRONG_BULLISH":
-            # Pullback to EMA9 or EMA21 with bullish reaction
-            is_above_vwap = vwap is None or spot >= (vwap - 8.0)
-            recent_lows = df_5m["low"].iloc[-3:]
-            pulled_back = (recent_lows <= (ema9 + 4.0)).any() or (recent_lows <= (ema21 + 4.0)).any()
-            closed_bullish = c > ema9 and c >= o
+        is_bullish_regime = regime in ("STRONG_BULLISH", "WEAK_BULLISH", "TREND_FOLLOWING")
+        is_bearish_regime = regime in ("STRONG_BEARISH", "WEAK_BEARISH")
 
-            if pulled_back and closed_bullish and is_above_vwap:
+        if is_bullish_regime:
+            # Pullback to EMA9 or EMA21 or strong trend continuation holding above EMA9/21
+            is_above_vwap = vwap is None or spot >= (vwap - 10.0)
+            recent_lows = df_5m["low"].iloc[-3:]
+            pulled_back = (recent_lows <= (ema9 + 5.0)).any() or (recent_lows <= (ema21 + 5.0)).any()
+            closed_bullish = (c > ema9 and c >= o) or (c > ema21 and c >= o and c >= float(df_5m["close"].iloc[-2]))
+
+            if (pulled_back or regime == "STRONG_BULLISH") and closed_bullish and is_above_vwap:
                 sl = min(float(df_5m["low"].iloc[-2:].min()), ema21) - 5.0
                 risk = max(12.0, spot - sl)
                 max_risk = max(45.0, 1.0 * atr)
@@ -154,7 +157,7 @@ class TrendContinuationStrategy(BaseStrategy):
                 return StrategySignal(
                     strategy_name=self.name,
                     action="CALL",
-                    confidence=0.85,
+                    confidence=0.85 if regime == "STRONG_BULLISH" else 0.80,
                     entry_level=spot,
                     stop_loss=sl,
                     target_1=t1,
@@ -164,20 +167,20 @@ class TrendContinuationStrategy(BaseStrategy):
                     risk_reward_ratio=rr,
                     invalidation_level=sl,
                     regime_matched=regime,
-                    entry_conditions=["Shallow pullback to 9/21 EMA in confirmed Strong Bullish trend", "Bullish bounce candle close above EMA 9"],
-                    confirmation_conditions=["Spot above intraday VWAP", "9 EMA > 21 EMA stack alignment"],
+                    entry_conditions=["Shallow pullback/continuation above 9/21 EMA in confirmed Bullish trend", "Bullish bounce candle holding above EMA stack"],
+                    confirmation_conditions=["Spot above intraday VWAP / EMAs", "9 EMA > 21 EMA stack alignment"],
                     invalidation_conditions=["Close below 21 EMA or structural swing low"],
                     is_valid=True,
                 )
 
-        elif regime == "STRONG_BEARISH":
-            # Pullback upward to EMA9 or EMA21 with bearish rejection
-            is_below_vwap = vwap is None or spot <= (vwap + 8.0)
+        elif is_bearish_regime:
+            # Pullback upward to EMA9 or EMA21 or strong trend continuation holding below EMA9/21
+            is_below_vwap = vwap is None or spot <= (vwap + 10.0)
             recent_highs = df_5m["high"].iloc[-3:]
-            pulled_back = (recent_highs >= (ema9 - 4.0)).any() or (recent_highs >= (ema21 - 4.0)).any()
-            closed_bearish = c < ema9 and c <= o
+            pulled_back = (recent_highs >= (ema9 - 5.0)).any() or (recent_highs >= (ema21 - 5.0)).any()
+            closed_bearish = (c < ema9 and c <= o) or (c < ema21 and c <= o and c <= float(df_5m["close"].iloc[-2]))
 
-            if pulled_back and closed_bearish and is_below_vwap:
+            if (pulled_back or regime == "STRONG_BEARISH") and closed_bearish and is_below_vwap:
                 sl = max(float(df_5m["high"].iloc[-2:].max()), ema21) + 5.0
                 risk = max(12.0, sl - spot)
                 max_risk = max(45.0, 1.0 * atr)
@@ -191,7 +194,7 @@ class TrendContinuationStrategy(BaseStrategy):
                 return StrategySignal(
                     strategy_name=self.name,
                     action="PUT",
-                    confidence=0.85,
+                    confidence=0.85 if regime == "STRONG_BEARISH" else 0.80,
                     entry_level=spot,
                     stop_loss=sl,
                     target_1=t1,
@@ -201,8 +204,8 @@ class TrendContinuationStrategy(BaseStrategy):
                     risk_reward_ratio=rr,
                     invalidation_level=sl,
                     regime_matched=regime,
-                    entry_conditions=["Pullback retest to 9/21 EMA in confirmed Strong Bearish trend", "Bearish rejection candle close below EMA 9"],
-                    confirmation_conditions=["Spot below intraday VWAP", "9 EMA < 21 EMA stack alignment"],
+                    entry_conditions=["Pullback retest/continuation below 9/21 EMA in confirmed Bearish trend", "Bearish rejection candle holding below EMA stack"],
+                    confirmation_conditions=["Spot below intraday VWAP / EMAs", "9 EMA < 21 EMA stack alignment"],
                     invalidation_conditions=["Close above 21 EMA or structural swing high"],
                     is_valid=True,
                 )
@@ -305,7 +308,15 @@ class OpeningRangeBreakoutStrategy(BaseStrategy):
 # ============================================================================
 class BreakoutExpansionStrategy(BaseStrategy):
     name = "BREAKOUT_EXPANSION"
-    suitable_regimes = ("BREAKOUT", "GAP_EXPANSION", "LOW_VOLATILITY")
+    suitable_regimes = (
+        "BREAKOUT",
+        "GAP_EXPANSION",
+        "LOW_VOLATILITY",
+        "STRONG_BULLISH",
+        "STRONG_BEARISH",
+        "WEAK_BULLISH",
+        "WEAK_BEARISH",
+    )
     min_rr = 1.8
 
     def evaluate(
@@ -333,10 +344,20 @@ class BreakoutExpansionStrategy(BaseStrategy):
         l = float(df_5m["low"].iloc[-1])
         body_ratio = abs(c - o) / max(h - l, 1.0)
 
+        # Dynamic resistance fallback to 20-period swing high if None
+        res_level = nearest_resistance
+        if res_level is None and len(df_5m) >= 15:
+            res_level = float(df_5m["high"].iloc[-21:-1].max()) if len(df_5m) >= 21 else float(df_5m["high"].iloc[:-1].max())
+
+        # Dynamic support fallback to 20-period swing low if None
+        sup_level = nearest_support
+        if sup_level is None and len(df_5m) >= 15:
+            sup_level = float(df_5m["low"].iloc[-21:-1].min()) if len(df_5m) >= 21 else float(df_5m["low"].iloc[:-1].min())
+
         # Bullish Breakout
-        if nearest_resistance is not None and spot >= nearest_resistance and c > nearest_resistance:
-            if body_ratio >= 0.50:
-                sl = max(nearest_resistance - (0.4 * atr), spot - 40.0)
+        if res_level is not None and spot >= res_level and c > res_level:
+            if body_ratio >= 0.45:
+                sl = max(res_level - (0.4 * atr), spot - 40.0)
                 risk = max(15.0, spot - sl)
                 t1 = spot + (1.8 * risk)
                 t2 = spot + (2.8 * risk)
@@ -352,18 +373,18 @@ class BreakoutExpansionStrategy(BaseStrategy):
                     risk_pts=risk,
                     reward_pts=t1 - spot,
                     risk_reward_ratio=rr,
-                    invalidation_level=nearest_resistance,
+                    invalidation_level=res_level,
                     regime_matched=regime,
-                    entry_conditions=[f"Clean 5m breakout close above resistance (₹{nearest_resistance:,.1f})", f"Healthy real body ratio ({body_ratio:.0%})"],
+                    entry_conditions=[f"Clean breakout close above resistance (₹{res_level:,.1f})", f"Healthy real body ratio ({body_ratio:.0%})"],
                     confirmation_conditions=["Volatility expansion beyond range boundary"],
-                    invalidation_conditions=[f"Immediate close back inside range below ₹{nearest_resistance:,.1f}"],
+                    invalidation_conditions=[f"Immediate close back inside range below ₹{res_level:,.1f}"],
                     is_valid=True,
                 )
 
         # Bearish Breakdown
-        elif nearest_support is not None and spot <= nearest_support and c < nearest_support:
-            if body_ratio >= 0.50:
-                sl = min(nearest_support + (0.4 * atr), spot + 40.0)
+        elif sup_level is not None and spot <= sup_level and c < sup_level:
+            if body_ratio >= 0.45:
+                sl = min(sup_level + (0.4 * atr), spot + 40.0)
                 risk = max(15.0, sl - spot)
                 t1 = spot - (1.8 * risk)
                 t2 = spot - (2.8 * risk)
@@ -379,11 +400,11 @@ class BreakoutExpansionStrategy(BaseStrategy):
                     risk_pts=risk,
                     reward_pts=spot - t1,
                     risk_reward_ratio=rr,
-                    invalidation_level=nearest_support,
+                    invalidation_level=sup_level,
                     regime_matched=regime,
-                    entry_conditions=[f"Clean 5m breakdown close below support (₹{nearest_support:,.1f})", f"Healthy real body ratio ({body_ratio:.0%})"],
+                    entry_conditions=[f"Clean breakdown close below support (₹{sup_level:,.1f})", f"Healthy real body ratio ({body_ratio:.0%})"],
                     confirmation_conditions=["Volatility expansion beyond breakdown level"],
-                    invalidation_conditions=[f"Immediate close back inside range above ₹{nearest_support:,.1f}"],
+                    invalidation_conditions=[f"Immediate close back inside range above ₹{sup_level:,.1f}"],
                     is_valid=True,
                 )
 
@@ -609,12 +630,12 @@ class PullbackEntryStrategy(BaseStrategy):
 
         # Bullish Pullback
         if regime in ("WEAK_BULLISH", "STRONG_BULLISH"):
-            if nearest_support is None or nearest_support >= spot:
-                return StrategySignal(self.name, "WAIT", 0.0, spot, spot, spot, spot, 0, 0, 0, spot, regime, is_valid=False, rejection_reason="No structural support below spot")
-
             sup_level = nearest_support
-            tested_support = (l <= sup_level + (0.3 * atr)) and (c >= sup_level)
-            bullish_candle = c > o and c > ema21 and (c - l) >= 0.5 * (h - l)
+            if sup_level is None or sup_level >= spot:
+                sup_level = min(ema21, float(df_5m["low"].iloc[-10:-1].min())) if len(df_5m) >= 10 else (ema21 - 5.0)
+
+            tested_support = (l <= sup_level + (0.35 * atr)) and (c >= sup_level - 5.0)
+            bullish_candle = c > o and c > (ema21 - 5.0) and (c - l) >= 0.45 * (h - l)
 
             if tested_support and bullish_candle:
                 sl = min(l, sup_level) - 5.0
@@ -648,12 +669,12 @@ class PullbackEntryStrategy(BaseStrategy):
 
         # Bearish Pullback
         elif regime in ("WEAK_BEARISH", "STRONG_BEARISH"):
-            if nearest_resistance is None or nearest_resistance <= spot:
-                return StrategySignal(self.name, "WAIT", 0.0, spot, spot, spot, spot, 0, 0, 0, spot, regime, is_valid=False, rejection_reason="No structural resistance above spot")
-
             res_level = nearest_resistance
-            tested_resistance = (h >= res_level - (0.3 * atr)) and (c <= res_level)
-            bearish_candle = c < o and c < ema21 and (h - c) >= 0.5 * (h - l)
+            if res_level is None or res_level <= spot:
+                res_level = max(ema21, float(df_5m["high"].iloc[-10:-1].max())) if len(df_5m) >= 10 else (ema21 + 5.0)
+
+            tested_resistance = (h >= res_level - (0.35 * atr)) and (c <= res_level + 5.0)
+            bearish_candle = c < o and c < (ema21 + 5.0) and (h - c) >= 0.45 * (h - l)
 
             if tested_resistance and bearish_candle:
                 sl = max(h, res_level) + 5.0

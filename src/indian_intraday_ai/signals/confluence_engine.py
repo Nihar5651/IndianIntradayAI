@@ -742,7 +742,10 @@ class ConfluenceStrategyEngine:
         total_bearish = min(100, int(round(total_bearish * scale_factor)))
 
         conflict_penalty = 0
-        if total_bullish >= 35 and total_bearish >= 35:
+        if total_bullish >= 35 and total_bearish >= 35 and (
+            (len(bullish_evidence) >= 2 and len(bearish_evidence) >= 2)
+            or abs(total_bullish - total_bearish) <= 12
+        ):
             conflict_penalty = int(min(total_bullish, total_bearish) * 0.70)
             conflicts.append(f"Contradictory directional evidence: Bullish score {total_bullish} vs Bearish score {total_bearish}")
 
