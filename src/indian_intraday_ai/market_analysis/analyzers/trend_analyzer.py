@@ -106,14 +106,16 @@ class TrendAnalyzer:
             direction = "SIDEWAYS"
 
         # Strength logic
-        if direction == "SIDEWAYS" or c_adx < self.weak_adx:
+        if direction == "SIDEWAYS" or (c_adx is not None and c_adx < self.weak_adx) or c_adx is None:
             strength = "WEAK"
-        elif c_adx >= self.strong_adx:
+        elif c_adx is not None and c_adx >= self.strong_adx:
             strength = "STRONG"
         else:
             strength = "MODERATE"
 
-        desc = f"{timeframe} is {direction} ({strength}, ADX {c_adx:.1f}, RSI {c_rsi:.1f})."
+        adx_str = f"{c_adx:.1f}" if (c_adx is not None and not np.isnan(c_adx)) else "N/A"
+        rsi_str = f"{c_rsi:.1f}" if (c_rsi is not None and not np.isnan(c_rsi)) else "N/A"
+        desc = f"{timeframe} is {direction} ({strength}, ADX {adx_str}, RSI {rsi_str})."
         return TimeframeTrend(
             timeframe=timeframe,
             direction=direction,

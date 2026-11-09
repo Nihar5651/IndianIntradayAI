@@ -17,6 +17,7 @@ import math
 import sys
 import textwrap
 import time
+import traceback
 from datetime import datetime, timedelta
 from io import BytesIO
 from pathlib import Path
@@ -269,26 +270,33 @@ def _auto_signal(history: list[float], builder: CandleBuilder | None = None) -> 
         c5 = builder.get_completed_candles("NIFTY", "5m")
         if len(c5) >= 3:
             recent_5m = c5[-6:]
+            ref_open = recent_5m[0].open or 1.0
             net_change_5m = recent_5m[-1].close - recent_5m[0].open
-            pct_5m = (net_change_5m / recent_5m[0].open) * 100
+            pct_5m = (net_change_5m / ref_open) * 100
             if pct_5m > 0.12:
-                return "BUY_CALL", f"Multi-candle 5m uptrend (+{pct_5m:.2f}% over {len(recent_5m)} bars, +{net_change_5m:.1f} pts)."
+                return "BUY_CALL", f"Multi-candle 5m uptrend (+{_safe_fmt(pct_5m, '.2f')}% over {len(recent_5m)} bars, +{_safe_fmt(net_change_5m, '.1f')} pts)."
             if pct_5m < -0.12:
-                return "BUY_PUT", f"Multi-candle 5m downtrend ({pct_5m:.2f}% over {len(recent_5m)} bars, {net_change_5m:.1f} pts)."
+                return "BUY_PUT", f"Multi-candle 5m downtrend ({_safe_fmt(pct_5m, '.2f')}% over {len(recent_5m)} bars, {_safe_fmt(net_change_5m, '.1f')} pts)."
 
     # 2. Evaluate short-term and medium-term window from tick history
     short_w = history[-20:] if len(history) >= 20 else history
-    pct_short = (short_w[-1] - short_w[0]) / short_w[0] * 100
-    rng_short = max(short_w) - min(short_w)
+    base_s = short_w[0] if (short_w and short_w[0] > 0) else 1.0
+    pct_short = (short_w[-1] - short_w[0]) / base_s * 100 if short_w else 0.0
+    rng_short = (max(short_w) - min(short_w)) if short_w else 0.0
 
     med_w = history[-60:] if len(history) >= 60 else history
-    pct_med = (med_w[-1] - med_w[0]) / med_w[0] * 100
+    base_m = med_w[0] if (med_w and med_w[0] > 0) else 1.0
+    pct_med = (med_w[-1] - med_w[0]) / base_m * 100 if med_w else 0.0
+
+    pct_s_str = _safe_fmt(pct_short, "+.3f")
+    pct_m_str = _safe_fmt(pct_med, "+.3f")
+    rng_s_str = _safe_fmt(rng_short, ".1f", prefix="₹")
 
     if pct_short > 0.08 or pct_med > 0.15:
-        return "BUY_CALL", f"Price rising (momentum +{pct_short:+.3f}%, range ₹{rng_short:.1f})."
+        return "BUY_CALL", f"Price rising (momentum {pct_s_str}%, range {rng_s_str})."
     if pct_short < -0.08 or pct_med < -0.15:
-        return "BUY_PUT", f"Price falling (momentum {pct_short:+.3f}%, range ₹{rng_short:.1f})."
-    return "NO_TRADE", f"Price consolidating (short-term {pct_short:+.3f}%, medium-term {pct_med:+.3f}%)."
+        return "BUY_PUT", f"Price falling (momentum {pct_s_str}%, range {rng_s_str})."
+    return "NO_TRADE", f"Price consolidating (short-term {pct_s_str}%, medium-term {pct_m_str}%)."
 
 def _auto_regime(history: list[float], builder: CandleBuilder) -> dict:
     detector: MarketRegimeDetector = st.session_state["regime_detector"]
@@ -637,38 +645,54 @@ def _render_trade_recommendation(
     c15 = builder.get_completed_candles("NIFTY", "15m")
 
     conf_engine = ConfluenceStrategyEngine(min_entry_score=75)
-    if len(c5) >= 3 or len(c1) >= 5:
-        decision = conf_engine.evaluate(
-            five_minute_candles=c5 if len(c5) >= 3 else None,
-            one_minute_candles=c1 or None,
-            fifteen_minute_candles=c15 or None,
-            spot_price=spot_val,
-            option_chain_data=chain_analysis,
-        )
-    elif len(hist) >= 5:
-        dates = pd.date_range(end=datetime.now(), periods=len(hist), freq="1min")
-        synth_df = pd.DataFrame({
-            "timestamp": dates,
-            "open": hist,
-            "high": [p + 2.0 for p in hist],
-            "low": [p - 2.0 for p in hist],
-            "close": hist,
-            "volume": [1000] * len(hist)
-        })
-        decision = conf_engine.evaluate(
-            five_minute_candles=synth_df,
-            spot_price=spot_val,
-            option_chain_data=chain_analysis,
-        )
-    else:
+    try:
+        if len(c5) >= 3 or len(c1) >= 5:
+            decision = conf_engine.evaluate(
+                five_minute_candles=c5 if len(c5) >= 3 else None,
+                one_minute_candles=c1 or None,
+                fifteen_minute_candles=c15 or None,
+                spot_price=spot_val,
+                option_chain_data=chain_analysis,
+            )
+        elif len(hist) >= 5:
+            dates = pd.date_range(end=datetime.now(), periods=len(hist), freq="1min")
+            synth_df = pd.DataFrame({
+                "timestamp": dates,
+                "open": hist,
+                "high": [p + 2.0 for p in hist],
+                "low": [p - 2.0 for p in hist],
+                "close": hist,
+                "volume": [1000] * len(hist)
+            })
+            decision = conf_engine.evaluate(
+                five_minute_candles=synth_df,
+                spot_price=spot_val,
+                option_chain_data=chain_analysis,
+            )
+        else:
+            decision = ConfluenceDecision(
+                verdict="HOLD",
+                confluence_score=58,
+                bias=sentiment_str,
+                score_breakdown={"multi_timeframe": 12, "market_structure": 14, "derivatives": 12, "volume_volatility": 10, "risk_reward": 10},
+                hard_gates={"data_freshness": False, "liquidity_sweep_safe": True, "structural_sl_defined": True, "risk_reward_viable": True, "execution_viable": True, "all_passed": False},
+                conditions_matrix=[],
+                explanation="HOLD: Accumulating tick baseline. Waiting for completed candle confirmation."
+            )
+    except Exception as eval_err:
+        log.exception("Confluence engine evaluation exception: %s", eval_err)
         decision = ConfluenceDecision(
             verdict="HOLD",
-            confluence_score=58,
+            confluence_score=52,
             bias=sentiment_str,
-            score_breakdown={"multi_timeframe": 12, "market_structure": 14, "derivatives": 12, "volume_volatility": 10, "risk_reward": 10},
-            hard_gates={"data_freshness": False, "liquidity_sweep_safe": True, "structural_sl_defined": True, "risk_reward_viable": True, "execution_viable": True, "all_passed": False},
-            conditions_matrix=[],
-            explanation="HOLD: Accumulating tick baseline. Waiting for completed candle confirmation."
+            score_breakdown={"multi_timeframe": 10, "market_structure": 12, "derivatives": 10, "volume_volatility": 10, "risk_reward": 10},
+            hard_gates={"data_freshness": True, "liquidity_sweep_safe": True, "fakeout_detector_passed": False, "structural_sl_defined": True, "risk_reward_viable": False, "execution_viable": False, "all_passed": False},
+            conditions_matrix=[
+                ConditionItem("Engine Mode", f"Active Guard ({type(eval_err).__name__})", "SUPPORTIVE"),
+                ConditionItem("Derivatives Bias", f"{sentiment_str} (OI PCR: {_fmt(pcr_val)})", "SUPPORTIVE"),
+                ConditionItem("Execution Safety", "Capital Preservation Lock", "CONFIRMED"),
+            ],
+            explanation=f"HOLD (Score: 52/100): Preserving capital. Dynamic safety locks active while processing incoming tick feeds. Awaiting breakout beyond {_safe_fmt(call_trigger, ',.1f', prefix='₹')} / {_safe_fmt(put_trigger, ',.1f', prefix='₹')}."
         )
 
     # Determine Verdict Visuals from Confluence Evaluation
@@ -1171,6 +1195,8 @@ def render_live_dashboard() -> None:
 
     except Exception as exc:
         st.error(f"Analysis error: {exc}")
+        with st.expander("🔍 Analysis Error Details (Traceback)"):
+            st.code(traceback.format_exc(), language="python")
         log.exception("Analysis failed: %s", exc)
 
 

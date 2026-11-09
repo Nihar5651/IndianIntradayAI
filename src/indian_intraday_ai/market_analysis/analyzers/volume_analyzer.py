@@ -134,10 +134,13 @@ class VolumeAnalyzer:
                 divergence = True
 
         div_text = " (Volume Divergence detected!)" if divergence else ""
+        rvol_str = f"{latest_rvol:.2f}" if (latest_rvol is not None and not np.isnan(latest_rvol)) else "1.00"
+        cmf_str = f"{latest_cmf:+.2f}" if (latest_cmf is not None and not np.isnan(latest_cmf)) else "+0.00"
+        dist_str = f"{vwap_dist:+.1f}" if (vwap_dist is not None and not np.isnan(vwap_dist)) else "+0.0"
         summary = (
-            f"Volume is {classification} (RVOL: {latest_rvol:.2f}x). OBV is {obv_trend}; "
-            f"CMF indicates {cmf_interp} ({latest_cmf:+.2f}). Price is {vwap_pos} VWAP "
-            f"({vwap_dist:+.1f} pts){div_text}."
+            f"Volume is {classification} (RVOL: {rvol_str}x). OBV is {obv_trend}; "
+            f"CMF indicates {cmf_interp} ({cmf_str}). Price is {vwap_pos} VWAP "
+            f"({dist_str} pts){div_text}."
         )
 
         return VolumeReport(

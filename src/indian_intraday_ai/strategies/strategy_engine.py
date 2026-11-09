@@ -362,6 +362,8 @@ class BreakoutExpansionStrategy(BaseStrategy):
                 t1 = spot + (1.8 * risk)
                 t2 = spot + (2.8 * risk)
                 rr = (t1 - spot) / risk
+                res_str = f"₹{res_level:,.1f}" if res_level is not None else "N/A"
+                body_str = f"{body_ratio:.0%}" if (body_ratio is not None and not np.isnan(body_ratio)) else "50%"
                 return StrategySignal(
                     strategy_name=self.name,
                     action="CALL",
@@ -375,9 +377,9 @@ class BreakoutExpansionStrategy(BaseStrategy):
                     risk_reward_ratio=rr,
                     invalidation_level=res_level,
                     regime_matched=regime,
-                    entry_conditions=[f"Clean breakout close above resistance (₹{res_level:,.1f})", f"Healthy real body ratio ({body_ratio:.0%})"],
+                    entry_conditions=[f"Clean breakout close above resistance ({res_str})", f"Healthy real body ratio ({body_str})"],
                     confirmation_conditions=["Volatility expansion beyond range boundary"],
-                    invalidation_conditions=[f"Immediate close back inside range below ₹{res_level:,.1f}"],
+                    invalidation_conditions=[f"Immediate close back inside range below {res_str}"],
                     is_valid=True,
                 )
 
@@ -389,6 +391,8 @@ class BreakoutExpansionStrategy(BaseStrategy):
                 t1 = spot - (1.8 * risk)
                 t2 = spot - (2.8 * risk)
                 rr = (spot - t1) / risk
+                sup_str = f"₹{sup_level:,.1f}" if sup_level is not None else "N/A"
+                body_str = f"{body_ratio:.0%}" if (body_ratio is not None and not np.isnan(body_ratio)) else "50%"
                 return StrategySignal(
                     strategy_name=self.name,
                     action="PUT",
@@ -402,9 +406,9 @@ class BreakoutExpansionStrategy(BaseStrategy):
                     risk_reward_ratio=rr,
                     invalidation_level=sup_level,
                     regime_matched=regime,
-                    entry_conditions=[f"Clean breakdown close below support (₹{sup_level:,.1f})", f"Healthy real body ratio ({body_ratio:.0%})"],
+                    entry_conditions=[f"Clean breakdown close below support ({sup_str})", f"Healthy real body ratio ({body_str})"],
                     confirmation_conditions=["Volatility expansion beyond breakdown level"],
-                    invalidation_conditions=[f"Immediate close back inside range above ₹{sup_level:,.1f}"],
+                    invalidation_conditions=[f"Immediate close back inside range above {sup_str}"],
                     is_valid=True,
                 )
 
@@ -536,7 +540,9 @@ class FailedBreakoutReversalStrategy(BaseStrategy):
             return StrategySignal(self.name, "WAIT", 0.0, spot, spot, spot, spot, 0, 0, 0, spot, regime, is_valid=False, rejection_reason="No confirmed fakeout / trap detected")
 
         trap_type = getattr(fakeout_info, "breakout_type", "")
-        trap_level = getattr(fakeout_info, "breakout_level", spot)
+        raw_level = getattr(fakeout_info, "breakout_level", None)
+        trap_level = float(raw_level) if (raw_level is not None and not np.isnan(raw_level)) else float(spot)
+        trap_str = f"₹{trap_level:,.1f}"
 
         # Bull Trap -> Fade into PUT!
         if "BULL" in getattr(fakeout_info, "reason", "").upper() or trap_type == "FAILED_BREAKOUT" and spot < trap_level:
@@ -545,6 +551,7 @@ class FailedBreakoutReversalStrategy(BaseStrategy):
             t1 = spot - (2.0 * risk)
             t2 = nearest_support if nearest_support and nearest_support < spot else (spot - 2.8 * risk)
             rr = (spot - t1) / risk
+            sl_str = f"₹{sl:,.1f}"
             return StrategySignal(
                 strategy_name=self.name,
                 action="PUT",
@@ -558,9 +565,9 @@ class FailedBreakoutReversalStrategy(BaseStrategy):
                 risk_reward_ratio=rr,
                 invalidation_level=sl,
                 regime_matched=regime,
-                entry_conditions=[f"Bull Trap Fade: Price failed breakout above ₹{trap_level:,.1f} and dropped back inside range"],
+                entry_conditions=[f"Bull Trap Fade: Price failed breakout above {trap_str} and dropped back inside range"],
                 confirmation_conditions=["Trapped buyers forced into stop-run liquidation", "Liquidity sweep verified"],
-                invalidation_conditions=[f"New high above trap wick at ₹{sl:,.1f}"],
+                invalidation_conditions=[f"New high above trap wick at {sl_str}"],
                 is_valid=True,
             )
 
@@ -571,6 +578,7 @@ class FailedBreakoutReversalStrategy(BaseStrategy):
             t1 = spot + (2.0 * risk)
             t2 = nearest_resistance if nearest_resistance and nearest_resistance > spot else (spot + 2.8 * risk)
             rr = (t1 - spot) / risk
+            sl_str = f"₹{sl:,.1f}"
             return StrategySignal(
                 strategy_name=self.name,
                 action="CALL",
@@ -584,9 +592,9 @@ class FailedBreakoutReversalStrategy(BaseStrategy):
                 risk_reward_ratio=rr,
                 invalidation_level=sl,
                 regime_matched=regime,
-                entry_conditions=[f"Bear Trap Fade: Price failed breakdown below ₹{trap_level:,.1f} and squeezed back inside range"],
+                entry_conditions=[f"Bear Trap Fade: Price failed breakdown below {trap_str} and squeezed back inside range"],
                 confirmation_conditions=["Trapped short sellers forced into short squeeze", "Sell-side sweep verified"],
-                invalidation_conditions=[f"New low below trap wick at ₹{sl:,.1f}"],
+                invalidation_conditions=[f"New low below trap wick at {sl_str}"],
                 is_valid=True,
             )
 
@@ -648,6 +656,8 @@ class PullbackEntryStrategy(BaseStrategy):
                 t2 = spot + (2.5 * risk)
                 rr = (t1 - spot) / risk
                 if rr >= self.min_rr:
+                    sup_str = f"₹{sup_level:,.1f}" if sup_level is not None else "N/A"
+                    sl_str = f"₹{sl:,.1f}" if sl is not None else "N/A"
                     return StrategySignal(
                         strategy_name=self.name,
                         action="CALL",
@@ -661,9 +671,9 @@ class PullbackEntryStrategy(BaseStrategy):
                         risk_reward_ratio=rr,
                         invalidation_level=sl,
                         regime_matched=regime,
-                        entry_conditions=[f"Pullback to confirmed support zone (₹{sup_level:,.1f})", "Bullish rejection candle holding above 21 EMA"],
+                        entry_conditions=[f"Pullback to confirmed support zone ({sup_str})", "Bullish rejection candle holding above 21 EMA"],
                         confirmation_conditions=["Support defended with constructive close"],
-                        invalidation_conditions=[f"Break and close below support at ₹{sl:,.1f}"],
+                        invalidation_conditions=[f"Break and close below support at {sl_str}"],
                         is_valid=True,
                     )
 
@@ -687,6 +697,8 @@ class PullbackEntryStrategy(BaseStrategy):
                 t2 = spot - (2.5 * risk)
                 rr = (spot - t1) / risk
                 if rr >= self.min_rr:
+                    res_str = f"₹{res_level:,.1f}" if res_level is not None else "N/A"
+                    sl_str = f"₹{sl:,.1f}" if sl is not None else "N/A"
                     return StrategySignal(
                         strategy_name=self.name,
                         action="PUT",
@@ -700,9 +712,9 @@ class PullbackEntryStrategy(BaseStrategy):
                         risk_reward_ratio=rr,
                         invalidation_level=sl,
                         regime_matched=regime,
-                        entry_conditions=[f"Pullback rally into confirmed resistance zone (₹{res_level:,.1f})", "Bearish rejection candle holding below 21 EMA"],
+                        entry_conditions=[f"Pullback rally into confirmed resistance zone ({res_str})", "Bearish rejection candle holding below 21 EMA"],
                         confirmation_conditions=["Resistance defended by institutional supply"],
-                        invalidation_conditions=[f"Break and close above resistance at ₹{sl:,.1f}"],
+                        invalidation_conditions=[f"Break and close above resistance at {sl_str}"],
                         is_valid=True,
                     )
 

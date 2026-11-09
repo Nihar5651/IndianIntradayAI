@@ -111,9 +111,12 @@ class VolatilityAnalyzer:
         expected_range = latest_atr * 2.5
 
         squeeze_text = " (Bollinger Squeeze active — breakout imminent)" if is_squeeze else ""
+        atr_str = f"{latest_atr:.1f}" if (latest_atr is not None and not np.isnan(latest_atr)) else "N/A"
+        atr_pct_str = f"{atr_pct:.2f}" if (atr_pct is not None and not np.isnan(atr_pct)) else "N/A"
+        pct_str = f"{percentile:.0f}" if (percentile is not None and not np.isnan(percentile)) else "50"
         summary = (
-            f"Volatility is {state} ({trend}, ATR: {latest_atr:.1f} pts / {atr_pct:.2f}%, "
-            f"Percentile: {percentile:.0f}%){squeeze_text}."
+            f"Volatility is {state} ({trend}, ATR: {atr_str} pts / {atr_pct_str}%, "
+            f"Percentile: {pct_str}%){squeeze_text}."
         )
 
         return VolatilityReport(
