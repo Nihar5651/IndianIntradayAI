@@ -488,18 +488,19 @@ class ConfluenceStrategyEngine:
         pcr_str = "Unavailable"
         if deriv_report.available and deriv_report.pcr_oi is not None:
             pcr = deriv_report.pcr_oi
-            pcr_str = f"OI PCR: {pcr:.2f} ({deriv_report.derivatives_bias})"
+            pcr_fmt = f"{pcr:.2f}" if (pcr is not None and not np.isnan(pcr)) else "N/A"
+            pcr_str = f"OI PCR: {pcr_fmt} ({deriv_report.derivatives_bias})"
 
-            if pcr >= 1.15:
+            if pcr is not None and pcr >= 1.15:
                 bullish_deriv += 8
-                bullish_evidence.append(f"Bullish OI PCR: {pcr:.2f}")
-            elif pcr >= 0.95:
+                bullish_evidence.append(f"Bullish OI PCR: {pcr_fmt}")
+            elif pcr is not None and pcr >= 0.95:
                 bullish_deriv += 5
                 bearish_deriv += 3
-            elif pcr <= 0.85:
+            elif pcr is not None and pcr <= 0.85:
                 bearish_deriv += 8
-                bearish_evidence.append(f"Bearish OI PCR: {pcr:.2f}")
-            elif pcr <= 1.05:
+                bearish_evidence.append(f"Bearish OI PCR: {pcr_fmt}")
+            elif pcr is not None and pcr <= 1.05:
                 bearish_deriv += 5
                 bullish_deriv += 3
             else:
@@ -554,12 +555,13 @@ class ConfluenceStrategyEngine:
 
         # RVOL / Volume confirmation (8 pts)
         rvol = volume_report.rvol
-        rvol_str = f"RVOL {rvol:.2f}x ({volume_report.volume_classification})"
+        rvol_fmt = f"{rvol:.2f}" if (rvol is not None and not np.isnan(rvol)) else "1.00"
+        rvol_str = f"RVOL {rvol_fmt}x ({volume_report.volume_classification})"
         if volume_report.volume_confirms_price:
-            if rvol >= 1.2:
+            if rvol is not None and rvol >= 1.2:
                 bullish_vol += 8
                 bearish_vol += 8
-            elif rvol >= 0.8:
+            elif rvol is not None and rvol >= 0.8:
                 bullish_vol += 5
                 bearish_vol += 5
             else:
@@ -571,14 +573,17 @@ class ConfluenceStrategyEngine:
 
         # Volume Profile Analysis (POC, VAH, VAL) (6 pts)
         vp_report = calculate_volume_profile(df_5m)
-        vp_str = f"POC: ₹{vp_report.poc:,.1f}" if vp_report.poc else "POC: N/A"
+        poc_fmt = f"₹{vp_report.poc:,.1f}" if (getattr(vp_report, 'poc', None) is not None and not np.isnan(vp_report.poc)) else "N/A"
+        vp_str = f"POC: {poc_fmt}" if vp_report.poc else "POC: N/A"
         if vp_report.available and vp_report.vah is not None and vp_report.val is not None:
+            vah_fmt = f"₹{vp_report.vah:,.0f}" if not np.isnan(vp_report.vah) else "N/A"
+            val_fmt = f"₹{vp_report.val:,.0f}" if not np.isnan(vp_report.val) else "N/A"
             if spot >= vp_report.vah:
                 bullish_vol += 6
-                vp_str += f" (Above VAH ₹{vp_report.vah:,.0f} - Bullish Expansion)"
+                vp_str += f" (Above VAH {vah_fmt} - Bullish Expansion)"
             elif spot <= vp_report.val:
                 bearish_vol += 6
-                vp_str += f" (Below VAL ₹{vp_report.val:,.0f} - Bearish Expansion)"
+                vp_str += f" (Below VAL {val_fmt} - Bearish Expansion)"
             elif vp_report.poc and spot >= vp_report.poc:
                 bullish_vol += 4
                 bearish_vol += 2
@@ -695,7 +700,8 @@ class ConfluenceStrategyEngine:
             rr_ratio = 1.5
             detected_setup = strategy_sig.strategy_name if strategy_sig else "NO_SETUP"
 
-        rr_str = f"1 : {rr_ratio:.1f}"
+        rr_fmt = f"{rr_ratio:.1f}" if (rr_ratio is not None and not np.isnan(rr_ratio)) else "1.5"
+        rr_str = f"1 : {rr_fmt}"
 
         # Gate 3: Structural Stop Loss defined (adaptive for intraday 10-55 pts or daily ATR)
         gate_structural_sl = (10.0 <= risk_pts <= max(55.0, 1.2 * atr_val))
@@ -861,9 +867,10 @@ class ConfluenceStrategyEngine:
 
             explanation = f"HOLD (Score: {total_score}/100): " + " ".join(reasons) + " Capital preservation enforced."
 
+        theta_val = getattr(option_sens_report, "theta_bleed_per_hour", None)
         theta_txt = (
-            f"{option_sens_report.theta_bleed_per_hour:.1f} pts/hr"
-            if option_sens_report.theta_bleed_per_hour is not None
+            f"{theta_val:.1f} pts/hr"
+            if (theta_val is not None and not np.isnan(theta_val))
             else "N/A"
         )
 

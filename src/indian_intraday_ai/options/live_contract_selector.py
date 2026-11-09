@@ -168,13 +168,18 @@ class LiveContractSelector:
 
         net_rr = net_option_pts / option_risk_pts if option_risk_pts > 0 else 0.0
 
-        if net_option_pts <= 2.0:
-            return False, f"Net expected option gain ({net_option_pts:.1f} pts) insufficient after theta (-{theta_decay:.1f} pts) & spread (-{spread_friction:.1f} pts).", net_rr
+        gain_str = f"{net_option_pts:.1f}" if net_option_pts is not None else "0.0"
+        theta_str = f"{theta_decay:.1f}" if theta_decay is not None else "0.0"
+        spread_str = f"{spread_friction:.1f}" if spread_friction is not None else "0.0"
+        rr_str = f"{net_rr:.2f}" if net_rr is not None else "0.00"
 
-        if net_rr < 1.3:
-            return False, f"Net Option R:R (1:{net_rr:.2f}) below 1:1.3 requirement after theta decay & execution costs.", net_rr
+        if net_option_pts is None or net_option_pts <= 2.0:
+            return False, f"Net expected option gain ({gain_str} pts) insufficient after theta (-{theta_str} pts) & spread (-{spread_str} pts).", (net_rr or 0.0)
 
-        return True, f"Option trade viable: Net gain +{net_option_pts:.1f} pts (R:R 1:{net_rr:.2f}) after theta & friction.", net_rr
+        if net_rr is None or net_rr < 1.3:
+            return False, f"Net Option R:R (1:{rr_str}) below 1:1.3 requirement after theta decay & execution costs.", (net_rr or 0.0)
+
+        return True, f"Option trade viable: Net gain +{gain_str} pts (R:R 1:{rr_str}) after theta & friction.", (net_rr or 0.0)
 
     def create_trade_plan(
         self,

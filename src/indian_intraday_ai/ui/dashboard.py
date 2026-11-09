@@ -708,19 +708,23 @@ def _render_trade_recommendation(
     # Dynamic target premium calculation from Delta
     if best_pe and getattr(best_pe, 'market_price', None) is not None and getattr(best_pe, 'delta', None) is not None and best_pe.market_price > 0:
         pe_delta_mag = max(0.25, abs(best_pe.delta))
-        pe_gain_t1   = abs(put_trigger - put_t1) * pe_delta_mag
+        pe_diff = abs(put_trigger - put_t1) if (put_trigger is not None and put_t1 is not None) else 50.0
+        pe_gain_t1   = pe_diff * pe_delta_mag
         pe_t1_prem   = round(best_pe.market_price + pe_gain_t1, 2)
         pe_target_str = f"Target 1 Option: ~{_safe_fmt(pe_t1_prem, '.2f', prefix='₹')} (+{_safe_fmt(pe_gain_t1, '.1f', prefix='₹')})"
     else:
-        pe_target_str = f"Target 1: Spot -{abs(put_trigger - put_t1):.0f} pts"
+        pe_diff = abs(put_trigger - put_t1) if (put_trigger is not None and put_t1 is not None) else 50.0
+        pe_target_str = f"Target 1: Spot -{_safe_fmt(pe_diff, '.0f')} pts"
 
     if best_ce and getattr(best_ce, 'market_price', None) is not None and getattr(best_ce, 'delta', None) is not None and best_ce.market_price > 0:
         ce_delta_mag = max(0.25, abs(best_ce.delta))
-        ce_gain_t1   = abs(call_t1 - call_trigger) * ce_delta_mag
+        ce_diff = abs(call_t1 - call_trigger) if (call_t1 is not None and call_trigger is not None) else 50.0
+        ce_gain_t1   = ce_diff * ce_delta_mag
         ce_t1_prem   = round(best_ce.market_price + ce_gain_t1, 2)
         ce_target_str = f"Target 1 Option: ~{_safe_fmt(ce_t1_prem, '.2f', prefix='₹')} (+{_safe_fmt(ce_gain_t1, '.1f', prefix='₹')})"
     else:
-        ce_target_str = f"Target 1: Spot +{abs(call_t1 - call_trigger):.0f} pts"
+        ce_diff = abs(call_t1 - call_trigger) if (call_t1 is not None and call_trigger is not None) else 50.0
+        ce_target_str = f"Target 1: Spot +{_safe_fmt(ce_diff, '.0f')} pts"
 
     conditions_html_list = []
     for item in decision.conditions_matrix:
@@ -1032,8 +1036,10 @@ def _render_trade_recommendation(
         st.subheader("💡 Why this decision")
         for r in advice.reasoning:
             st.write(f"• {r}")
-        st.write(f"• Trend EMA Status: {tech_indicators['ema_trend']}")
-        st.write(f"• Option Chain Sentiment: {chain_analysis.sentiment} (OI PCR: {_fmt(chain_analysis.put_call_oi_ratio)})")
+        ema_status = tech_indicators.get("ema_trend", "—") if isinstance(tech_indicators, dict) else getattr(tech_indicators, "ema_trend", "—")
+        st.write(f"• Trend EMA Status: {ema_status}")
+        sentiment_val = getattr(chain_analysis, "sentiment", "NEUTRAL") or "NEUTRAL"
+        st.write(f"• Option Chain Sentiment: {sentiment_val} (OI PCR: {_fmt(getattr(chain_analysis, 'put_call_oi_ratio', None))})")
     with right:
         st.subheader("⚠️ Structural Checks")
         if advice.warnings:

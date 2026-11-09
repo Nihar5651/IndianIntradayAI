@@ -59,19 +59,26 @@ class DerivativesAnalyzer:
             )
 
         # Support both OptionChainAnalysis dataclass and dict
-        if hasattr(option_analysis, "pcr"):
-            pcr_oi = float(option_analysis.pcr)
-            pcr_vol = float(getattr(option_analysis, "volume_pcr", 1.0))
-            max_pain = float(getattr(option_analysis, "max_pain", 0.0))
-            pe_supp = float(getattr(option_analysis, "pe_max_oi_strike", 0.0))
-            ce_res = float(getattr(option_analysis, "ce_max_oi_strike", 0.0))
+        if hasattr(option_analysis, "put_call_oi_ratio"):
+            pcr_oi = float(option_analysis.put_call_oi_ratio) if option_analysis.put_call_oi_ratio is not None else 1.0
+            pcr_vol = float(getattr(option_analysis, "put_call_volume_ratio", 1.0) or 1.0)
+            max_pain = float(getattr(option_analysis, "max_pain_strike", 0.0) or 0.0)
+            pe_supp = float(getattr(option_analysis, "support_strike", 0.0) or 0.0)
+            ce_res = float(getattr(option_analysis, "resistance_strike", 0.0) or 0.0)
+            raw_sentiment = getattr(option_analysis, "sentiment", "NEUTRAL")
+        elif hasattr(option_analysis, "pcr"):
+            pcr_oi = float(option_analysis.pcr) if option_analysis.pcr is not None else 1.0
+            pcr_vol = float(getattr(option_analysis, "volume_pcr", 1.0) or 1.0)
+            max_pain = float(getattr(option_analysis, "max_pain", 0.0) or 0.0)
+            pe_supp = float(getattr(option_analysis, "pe_max_oi_strike", 0.0) or 0.0)
+            ce_res = float(getattr(option_analysis, "ce_max_oi_strike", 0.0) or 0.0)
             raw_sentiment = getattr(option_analysis, "sentiment", "NEUTRAL")
         elif isinstance(option_analysis, dict):
-            pcr_oi = float(option_analysis.get("pcr", 1.0))
-            pcr_vol = float(option_analysis.get("volume_pcr", 1.0))
-            max_pain = float(option_analysis.get("max_pain", 0.0))
-            pe_supp = float(option_analysis.get("pe_max_oi_strike", 0.0))
-            ce_res = float(option_analysis.get("ce_max_oi_strike", 0.0))
+            pcr_oi = float(option_analysis.get("put_call_oi_ratio") or option_analysis.get("pcr", 1.0) or 1.0)
+            pcr_vol = float(option_analysis.get("put_call_volume_ratio") or option_analysis.get("volume_pcr", 1.0) or 1.0)
+            max_pain = float(option_analysis.get("max_pain_strike") or option_analysis.get("max_pain", 0.0) or 0.0)
+            pe_supp = float(option_analysis.get("support_strike") or option_analysis.get("pe_max_oi_strike", 0.0) or 0.0)
+            ce_res = float(option_analysis.get("resistance_strike") or option_analysis.get("ce_max_oi_strike", 0.0) or 0.0)
             raw_sentiment = option_analysis.get("sentiment", "NEUTRAL")
         else:
             return DerivativesReport(
@@ -109,10 +116,16 @@ class DerivativesAnalyzer:
         )
 
         basis_str = f", Futures Basis: {basis:+.1f} pts" if basis is not None else ""
+        pcr_oi_str = f"{pcr_oi:.2f}" if pcr_oi is not None else "N/A"
+        pcr_vol_str = f"{pcr_vol:.2f}" if pcr_vol is not None else "N/A"
+        max_pain_str = f"₹{max_pain:,.0f}" if (max_pain is not None and max_pain > 0) else "N/A"
+        pe_supp_str = f"₹{pe_supp:,.0f}" if (pe_supp is not None and pe_supp > 0) else "N/A"
+        ce_res_str = f"₹{ce_res:,.0f}" if (ce_res is not None and ce_res > 0) else "N/A"
+
         summary = (
-            f"Derivatives Bias is {bias} (OI PCR: {pcr_oi:.2f}, Vol PCR: {pcr_vol:.2f}, "
-            f"Max Pain: ₹{max_pain:,.0f}{basis_str}). "
-            f"Major PE Wall (Support): ₹{pe_supp:,.0f}; Major CE Wall (Resistance): ₹{ce_res:,.0f}."
+            f"Derivatives Bias is {bias} (OI PCR: {pcr_oi_str}, Vol PCR: {pcr_vol_str}, "
+            f"Max Pain: {max_pain_str}{basis_str}). "
+            f"Major PE Wall (Support): {pe_supp_str}; Major CE Wall (Resistance): {ce_res_str}."
         )
 
         return DerivativesReport(
