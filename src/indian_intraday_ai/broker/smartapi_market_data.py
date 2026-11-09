@@ -142,3 +142,88 @@ class SmartApiMarketData:
         except Exception:
             pass
         return None
+
+    def fetch_intraday_candles(
+        self,
+        symbol: str = "NIFTY",
+        token: str = "99926000",
+        interval: str = "FIVE_MINUTE",
+        from_date: str | None = None,
+        to_date: str | None = None,
+    ) -> list[Any]:
+        """Fetch historical completed candles from Angel One SmartAPI getCandleData.
+
+        Intervals: ONE_MINUTE, THREE_MINUTE, FIVE_MINUTE, FIFTEEN_MINUTE
+        """
+        try:
+            from datetime import datetime, timedelta
+            from zoneinfo import ZoneInfo
+            from indian_intraday_ai.market_data.candle_builder import Candle
+
+            ist = ZoneInfo("Asia/Kolkata")
+            now = datetime.now(ist)
+
+            if not from_date or not to_date:
+                # Default: fetch previous trading day 09:15 up to current time
+                # to guarantee rich completed candle history for EMAs, MACD, and confluence analysis.
+                prev_date = now.date() - timedelta(days=1)
+                while prev_date.weekday() >= 5:
+                    prev_date = prev_date - timedelta(days=1)
+
+                from_date = f"{prev_date.strftime('%Y-%m-%d')} 09:15"
+                to_date = now.strftime("%Y-%m-%d %H:%M") if now.hour >= 9 else f"{prev_date.strftime('%Y-%m-%d')} 15:30"
+
+            smart_api = self._get_api()
+            params = {
+                "exchange": "NSE",
+                "symboltoken": token,
+                "interval": interval,
+                "fromdate": from_date,
+                "todate": to_date,
+            }
+            res = smart_api.getCandleData(params)
+            if not res or not res.get("status") or not res.get("data"):
+                return []
+
+            tf_map = {
+                "ONE_MINUTE": ("1m", 1),
+                "THREE_MINUTE": ("3m", 3),
+                "FIVE_MINUTE": ("5m", 5),
+                "FIFTEEN_MINUTE": ("15m", 15),
+            }
+            tf_label, mins = tf_map.get(interval, ("5m", 5))
+
+            candles: list[Candle] = []
+            for row in res["data"]:
+                if len(row) < 5:
+                    continue
+                try:
+                    ts_str = str(row[0])
+                    if "T" in ts_str:
+                        ts = datetime.fromisoformat(ts_str)
+                    else:
+                        ts = datetime.strptime(ts_str[:16], "%Y-%m-%d %H:%M").replace(tzinfo=ist)
+                    if ts.tzinfo is None:
+                        ts = ts.replace(tzinfo=ist)
+
+                    c = Candle(
+                        symbol=symbol,
+                        timeframe=tf_label,
+                        start_time=ts,
+                        end_time=ts + timedelta(minutes=mins),
+                        open=float(row[1]),
+                        high=float(row[2]),
+                        low=float(row[3]),
+                        close=float(row[4]),
+                        volume=int(row[5]) if len(row) > 5 else 0,
+                        tick_count=1,
+                        is_complete=True,
+                        data_source="SMARTAPI_HISTORIC",
+                    )
+                    candles.append(c)
+                except Exception:
+                    continue
+
+            return candles
+        except Exception:
+            return []

@@ -11,11 +11,12 @@ Deployment:
 
 from __future__ import annotations
 
+import json
 import logging
 import sys
 import textwrap
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -54,7 +55,7 @@ log = logging.getLogger(__name__)
 # Config
 # ---------------------------------------------------------------------------
 REFRESH_INTERVAL  = 3     # seconds between live LTP REST fetches (real-time cadence)
-LTP_HISTORY_MAX   = 200   # max readings kept per session
+LTP_HISTORY_MAX   = 5000  # max readings kept per session (full intraday buffer)
 
 SMARTAPI_SECRET_KEYS = (
     "SMARTAPI_API_KEY",
@@ -111,24 +112,124 @@ def _calculate_next_expiry_days(now: datetime | None = None) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Global Persistent Market State (survives page refreshes & restarts)
+# ---------------------------------------------------------------------------
+class GlobalMarketState:
+    """Process-wide persistent market state.
+
+    Survives across Streamlit browser reloads and client refreshes.
+    Periodically writes to local disk in data/live_cache to survive
+    process restarts.
+    """
+    def __init__(self) -> None:
+        self.builder = CandleBuilder(cumulative_volume=False, max_history=2000)
+        self.dqm = DataQualityMonitor()
+        self.tick_handler = TickHandler()
+        self.ltp_history: list[float] = []
+        self.last_fetch_ts: datetime | None = None
+        self.seeded_history: bool = False
+        self._cache_dir = Path("data/live_cache")
+        self._candles_file = self._cache_dir / "candles_cache.json"
+        self._ltp_file = self._cache_dir / "ltp_history.json"
+        self._restore_from_disk()
+
+    def _restore_from_disk(self) -> None:
+        try:
+            if self._candles_file.exists():
+                count = self.builder.load_from_disk(self._candles_file)
+                log.info("Restored %d candles from disk cache: %s", count, self._candles_file)
+            if self._ltp_file.exists():
+                with open(self._ltp_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    if isinstance(data, list):
+                        self.ltp_history = [float(x) for x in data][-LTP_HISTORY_MAX:]
+                        log.info("Restored %d LTP points from disk cache", len(self.ltp_history))
+        except Exception as exc:
+            log.warning("Could not restore disk cache: %s", exc)
+
+    def save_to_disk(self) -> None:
+        try:
+            self._cache_dir.mkdir(parents=True, exist_ok=True)
+            self.builder.save_to_disk(self._candles_file)
+            temp_ltp = self._ltp_file.with_suffix(".tmp")
+            with open(temp_ltp, "w", encoding="utf-8") as f:
+                json.dump(self.ltp_history[-LTP_HISTORY_MAX:], f)
+            temp_ltp.replace(self._ltp_file)
+        except Exception as exc:
+            log.warning("Could not save market state to disk: %s", exc)
+
+    def ingest_tick(self, tick: MarketTick) -> None:
+        self.tick_handler.handle_tick(tick)
+        self.builder.process_tick(tick)
+        self.dqm.update(tick)
+        self.ltp_history.append(tick.ltp)
+        if len(self.ltp_history) > LTP_HISTORY_MAX:
+            self.ltp_history.pop(0)
+        self.last_fetch_ts = tick.timestamp
+        # Save to disk every 15 ticks to keep cache fresh without excessive disk I/O
+        if len(self.ltp_history) % 15 == 0:
+            self.save_to_disk()
+
+    def seed_historical_if_needed(self, md: SmartApiMarketData | None) -> None:
+        if self.seeded_history:
+            return
+
+        counts = self.builder.candle_counts("NIFTY")
+        if counts.get("5m", 0) >= 10 and counts.get("1m", 0) >= 20:
+            self.seeded_history = True
+            return
+
+        if md:
+            try:
+                log.info("Seeding historical candles from SmartAPI for NIFTY...")
+                all_added = 0
+                for interval in ("ONE_MINUTE", "THREE_MINUTE", "FIVE_MINUTE", "FIFTEEN_MINUTE"):
+                    c_list = md.fetch_intraday_candles("NIFTY", "99926000", interval)
+                    if c_list:
+                        added = self.builder.seed_completed_candles(c_list)
+                        all_added += added
+                        if interval == "ONE_MINUTE" and len(self.ltp_history) < len(c_list):
+                            self.ltp_history = [c.close for c in c_list]
+                if all_added > 0:
+                    self.save_to_disk()
+                    log.info("Successfully seeded %d historical candles from SmartAPI", all_added)
+            except Exception as exc:
+                log.warning("Historical candle seeding error: %s", exc)
+        self.seeded_history = True
+
+
+@st.cache_resource
+def get_global_market_state() -> GlobalMarketState:
+    """Streamlit process-wide singleton for market state."""
+    return GlobalMarketState()
+
+
+# ---------------------------------------------------------------------------
 # Session-state initialisation
 # ---------------------------------------------------------------------------
 def _init_state() -> None:
-    if "dqm"             not in st.session_state:
-        d = DataQualityMonitor(); d.set_demo()
-        st.session_state["dqm"] = d
-    if "tick_handler"    not in st.session_state:
-        st.session_state["tick_handler"]    = TickHandler()
-    if "candle_builder"  not in st.session_state:
-        st.session_state["candle_builder"]  = CandleBuilder(cumulative_volume=False)
+    gms = get_global_market_state()
+    st.session_state["global_market"]   = gms
+    st.session_state["dqm"]             = gms.dqm
+    st.session_state["tick_handler"]    = gms.tick_handler
+    st.session_state["candle_builder"]  = gms.builder
+    st.session_state["ltp_history"]     = gms.ltp_history
     if "regime_detector" not in st.session_state:
         st.session_state["regime_detector"] = MarketRegimeDetector()
-    if "ltp_history"     not in st.session_state:
-        st.session_state["ltp_history"]     = []
-    if "last_fetch_ts"   not in st.session_state:
-        st.session_state["last_fetch_ts"]   = None
-    if "expiry_days"     not in st.session_state:
+    if "last_fetch_ts" not in st.session_state:
+        st.session_state["last_fetch_ts"]   = gms.last_fetch_ts
+    if "expiry_days" not in st.session_state:
         st.session_state["expiry_days"]     = _calculate_next_expiry_days()
+
+    # Attempt to seed historical candles if secrets configured and not yet seeded
+    if not gms.seeded_history and _secrets_configured():
+        try:
+            creds = SmartApiCredentials.from_mapping({k: _get_secret(k) for k in SMARTAPI_SECRET_KEYS})
+            md = SmartApiMarketData(creds)
+            gms.seed_historical_if_needed(md)
+            st.session_state["ltp_history"] = gms.ltp_history
+        except Exception as exc:
+            log.warning("Initial historical seeding skipped: %s", exc)
 
 
 # ---------------------------------------------------------------------------
@@ -147,33 +248,46 @@ def _ingest_ltp(ltp: float) -> None:
     now  = datetime.now(IST)
     tick = MarketTick(symbol="NIFTY", ltp=ltp, timestamp=now,
                       volume=0, source="SMARTAPI_REST")
-    dqm: DataQualityMonitor = st.session_state["dqm"]
-    builder: CandleBuilder  = st.session_state["candle_builder"]
-    handler: TickHandler    = st.session_state["tick_handler"]
-    handler.handle_tick(tick)
-    builder.process_tick(tick)
-    dqm.update(tick)
-    history: list[float] = st.session_state["ltp_history"]
-    history.append(ltp)
-    if len(history) > LTP_HISTORY_MAX:
-        history.pop(0)
-    st.session_state["last_fetch_ts"] = now
+    gms: GlobalMarketState = st.session_state.get("global_market", get_global_market_state())
+    gms.ingest_tick(tick)
+    st.session_state["dqm"]            = gms.dqm
+    st.session_state["candle_builder"] = gms.builder
+    st.session_state["ltp_history"]    = gms.ltp_history
+    st.session_state["last_fetch_ts"]  = gms.last_fetch_ts
 
 
 # ---------------------------------------------------------------------------
 # Auto-signal from LTP trend
 # ---------------------------------------------------------------------------
-def _auto_signal(history: list[float]) -> tuple[str, str]:
-    if len(history) < 5:
-        return "NO_TRADE", f"Accumulating data ({len(history)}/5 readings)."
-    window   = history[-10:] if len(history) >= 10 else history
-    pct      = (window[-1] - window[0]) / window[0] * 100
-    rng      = max(window) - min(window)
-    if pct > 0.08:
-        return "BUY_CALL", f"Price rising {pct:+.3f}% over {len(window)} readings (range ₹{rng:.1f})."
-    if pct < -0.08:
-        return "BUY_PUT",  f"Price falling {pct:+.3f}% over {len(window)} readings (range ₹{rng:.1f})."
-    return "NO_TRADE", f"Price flat {pct:+.3f}% — market consolidating."
+def _auto_signal(history: list[float], builder: CandleBuilder | None = None) -> tuple[str, str]:
+    if len(history) < 3:
+        return "NO_TRADE", f"Accumulating data ({len(history)}/3 readings)."
+
+    # 1. Check completed 5m candle trend if available for broader structural context
+    if builder:
+        c5 = builder.get_completed_candles("NIFTY", "5m")
+        if len(c5) >= 3:
+            recent_5m = c5[-6:]
+            net_change_5m = recent_5m[-1].close - recent_5m[0].open
+            pct_5m = (net_change_5m / recent_5m[0].open) * 100
+            if pct_5m > 0.12:
+                return "BUY_CALL", f"Multi-candle 5m uptrend (+{pct_5m:.2f}% over {len(recent_5m)} bars, +{net_change_5m:.1f} pts)."
+            if pct_5m < -0.12:
+                return "BUY_PUT", f"Multi-candle 5m downtrend ({pct_5m:.2f}% over {len(recent_5m)} bars, {net_change_5m:.1f} pts)."
+
+    # 2. Evaluate short-term and medium-term window from tick history
+    short_w = history[-20:] if len(history) >= 20 else history
+    pct_short = (short_w[-1] - short_w[0]) / short_w[0] * 100
+    rng_short = max(short_w) - min(short_w)
+
+    med_w = history[-60:] if len(history) >= 60 else history
+    pct_med = (med_w[-1] - med_w[0]) / med_w[0] * 100
+
+    if pct_short > 0.08 or pct_med > 0.15:
+        return "BUY_CALL", f"Price rising (momentum +{pct_short:+.3f}%, range ₹{rng_short:.1f})."
+    if pct_short < -0.08 or pct_med < -0.15:
+        return "BUY_PUT", f"Price falling (momentum {pct_short:+.3f}%, range ₹{rng_short:.1f})."
+    return "NO_TRADE", f"Price consolidating (short-term {pct_short:+.3f}%, medium-term {pct_med:+.3f}%)."
 
 def _auto_regime(history: list[float], builder: CandleBuilder) -> dict:
     detector: MarketRegimeDetector = st.session_state["regime_detector"]
@@ -186,25 +300,58 @@ def _auto_regime(history: list[float], builder: CandleBuilder) -> dict:
         except Exception as exc:
             log.warning("RegimeDetector failed: %s", exc)
     if len(history) >= 5:
-        window = history[-20:] if len(history) >= 20 else history
+        window = history[-60:] if len(history) >= 60 else history
         pct = (window[-1] - window[0]) / window[0] * 100
         if pct > 0.15:  return {"regime": "WEAK_BULLISH", "direction": "BULLISH", "reason": f"LTP up {pct:+.3f}%"}
         if pct < -0.15: return {"regime": "WEAK_BEARISH", "direction": "BEARISH", "reason": f"LTP down {pct:+.3f}%"}
     return {"regime": "UNCERTAIN", "direction": "UNKNOWN", "reason": "Insufficient data."}
 
-def _auto_atr(history: list[float]) -> float:
+def _auto_atr(history: list[float], builder: CandleBuilder | None = None) -> float:
+    if builder:
+        c5 = builder.get_completed_candles("NIFTY", "5m")
+        if len(c5) >= 3:
+            trs = []
+            for i, c in enumerate(c5):
+                prev_close = c5[i-1].close if i > 0 else c.open
+                tr = max(c.high - c.low, abs(c.high - prev_close), abs(c.low - prev_close))
+                trs.append(tr)
+            recent_trs = trs[-14:]
+            atr_val = sum(recent_trs) / len(recent_trs)
+            return max(round(atr_val, 1), 50.0)
     if len(history) >= 20:
-        w = history[-20:]
+        w = history[-60:] if len(history) >= 60 else history
         rng = max(w) - min(w)
-        return max(rng, 50.0)  # Standard NIFTY intraday wave floor (50.0 pts)
+        return max(round(rng, 1), 50.0)  # Standard NIFTY intraday wave floor (50.0 pts)
     return 50.0
 
 
-def _compute_technical_indicators(history: list[float], spot: float) -> dict[str, Any]:
-    """Compute live technical indicators (RSI 14, EMA 9, EMA 21, and trend)."""
+def _compute_technical_indicators(
+    history: list[float],
+    spot: float,
+    builder: CandleBuilder | None = None,
+) -> dict[str, Any]:
+    """Compute live technical indicators (RSI 14, EMA 9, EMA 21, and trend).
+    Uses full session completed candle closes when available, or full history series.
+    """
+    series_data: list[float] = []
+    if builder:
+        c1 = builder.get_completed_candles("NIFTY", "1m")
+        if len(c1) >= 14:
+            series_data = [c.close for c in c1]
+        else:
+            c5 = builder.get_completed_candles("NIFTY", "5m")
+            if len(c5) >= 14:
+                series_data = [c.close for c in c5]
+
+    if not series_data:
+        series_data = history
+
+    if series_data and abs(series_data[-1] - spot) > 0.01:
+        series_data = list(series_data) + [spot]
+
     # 1. RSI (14)
-    if len(history) >= 14:
-        s = pd.Series(history)
+    if len(series_data) >= 14:
+        s = pd.Series(series_data)
         delta = s.diff()
         gains = delta.clip(lower=0)
         losses = -delta.clip(upper=0)
@@ -233,10 +380,10 @@ def _compute_technical_indicators(history: list[float], spot: float) -> dict[str
         rsi_zone = "Neutral (45–55)"
 
     # 2. EMAs
-    if len(history) >= 5:
-        s = pd.Series(history)
+    if len(series_data) >= 5:
+        s = pd.Series(series_data)
         ema9 = round(float(s.ewm(span=9, adjust=False).mean().iloc[-1]), 2)
-        ema21 = round(float(s.ewm(span=21, adjust=False).mean().iloc[-1]), 2) if len(history) >= 10 else None
+        ema21 = round(float(s.ewm(span=21, adjust=False).mean().iloc[-1]), 2) if len(series_data) >= 10 else None
     else:
         ema9 = round(spot, 2)
         ema21 = None
@@ -461,9 +608,9 @@ def _render_trade_recommendation(
     c15 = builder.get_completed_candles("NIFTY", "15m")
 
     conf_engine = ConfluenceStrategyEngine(min_entry_score=75)
-    if len(c5) >= 5:
+    if len(c5) >= 3 or len(c1) >= 5:
         decision = conf_engine.evaluate(
-            five_minute_candles=c5,
+            five_minute_candles=c5 if len(c5) >= 3 else None,
             one_minute_candles=c1 or None,
             fifteen_minute_candles=c15 or None,
             spot_price=spot,
@@ -931,8 +1078,8 @@ def render_live_dashboard() -> None:
     try:
         chain_analysis = OptionChainAnalyzer().analyze(option_chain, spot)
         regime         = _auto_regime(history, builder)
-        atr_pts        = _auto_atr(history)
-        tech_indicators = _compute_technical_indicators(history, spot)
+        atr_pts        = _auto_atr(history, builder=builder)
+        tech_indicators = _compute_technical_indicators(history, spot, builder=builder)
 
         # Greeks calculation across full chain
         calc       = GreeksCalculator(expiry_days=st.session_state["expiry_days"])
@@ -953,7 +1100,7 @@ def render_live_dashboard() -> None:
                 best_pe = min(pe_list, key=lambda g: abs(g.strike - spot))
 
         # Trend-based signal validation
-        signal, reason = _auto_signal(history)
+        signal, reason = _auto_signal(history, builder=builder)
         if signal == "BUY_CALL" and best_ce:
             signal, reason = _greeks_signal_adjustment(signal, reason, best_ce)
         elif signal == "BUY_PUT" and best_pe:

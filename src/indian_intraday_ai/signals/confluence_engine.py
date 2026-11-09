@@ -205,6 +205,14 @@ class ConfluenceStrategyEngine:
         df_1m = self._to_dataframe(one_minute_candles)
         df_15m = self._to_dataframe(fifteen_minute_candles)
 
+        # Fallback build 5m from 1m if df_5m is empty but 1m candles exist
+        if df_5m.empty and len(df_1m) >= 5:
+            df_resampled = df_1m.set_index("timestamp").sort_index()
+            agg_5m = df_resampled.resample("5min", label="left", closed="left").agg({
+                "open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"
+            }).dropna().reset_index()
+            df_5m = agg_5m
+
         # Fallback build 15m from 5m if missing
         if df_15m.empty and len(df_5m) >= 6:
             df_resampled = df_5m.set_index("timestamp").sort_index()
@@ -213,8 +221,8 @@ class ConfluenceStrategyEngine:
             }).dropna().reset_index()
             df_15m = agg
 
-        # Gate 1: Data Freshness & Sufficiency
-        gate_data_freshness = len(df_5m) >= 20 and (spot_price is not None or not df_5m.empty)
+        # Gate 1: Data Freshness & Sufficiency (requires at least 3 completed 5m candles or 5 1m candles)
+        gate_data_freshness = (len(df_5m) >= 3 or len(df_1m) >= 5) and (spot_price is not None or not df_5m.empty)
         if not gate_data_freshness:
             return ConfluenceDecision(
                 verdict="HOLD",

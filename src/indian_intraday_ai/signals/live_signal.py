@@ -31,7 +31,7 @@ class LiveSignalEngine:
     This module generates signals only. It does not place live broker orders.
     """
 
-    MIN_CANDLES = 35
+    MIN_CANDLES = 5
 
     def __init__(
         self,

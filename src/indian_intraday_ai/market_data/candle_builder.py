@@ -24,6 +24,8 @@ import threading
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+import json
+from pathlib import Path
 from typing import Deque
 
 from indian_intraday_ai.market_data.tick_handler import MarketTick
@@ -42,7 +44,7 @@ TIMEFRAMES: dict[str, int] = {
     "1h": 60,
 }
 
-MAX_HISTORY = 500  # completed candles kept per (symbol, timeframe)
+MAX_HISTORY = 2000  # completed candles kept per (symbol, timeframe)
 
 
 @dataclass
@@ -70,6 +72,47 @@ class Candle:
         self.volume += volume_delta
         self.tick_count += 1
 
+    def to_dict(self) -> dict:
+        return {
+            "symbol": self.symbol,
+            "timeframe": self.timeframe,
+            "start_time": self.start_time.isoformat(),
+            "end_time": self.end_time.isoformat(),
+            "open": self.open,
+            "high": self.high,
+            "low": self.low,
+            "close": self.close,
+            "volume": self.volume,
+            "tick_count": self.tick_count,
+            "is_complete": self.is_complete,
+            "volume_incomplete": self.volume_incomplete,
+            "data_source": self.data_source,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "Candle":
+        st = datetime.fromisoformat(d["start_time"])
+        if st.tzinfo is None:
+            st = st.replace(tzinfo=IST)
+        et = datetime.fromisoformat(d["end_time"])
+        if et.tzinfo is None:
+            et = et.replace(tzinfo=IST)
+        return cls(
+            symbol=d["symbol"],
+            timeframe=d["timeframe"],
+            start_time=st,
+            end_time=et,
+            open=float(d["open"]),
+            high=float(d["high"]),
+            low=float(d["low"]),
+            close=float(d["close"]),
+            volume=int(d.get("volume", 0)),
+            tick_count=int(d.get("tick_count", 0)),
+            is_complete=bool(d.get("is_complete", True)),
+            volume_incomplete=bool(d.get("volume_incomplete", False)),
+            data_source=d.get("data_source", "CACHE"),
+        )
+
 
 class CandleBuilder:
     """Converts market ticks into multi-timeframe OHLCV candles.
@@ -91,9 +134,10 @@ class CandleBuilder:
     ``volume_incomplete``.
     """
 
-    def __init__(self, cumulative_volume: bool = True) -> None:
+    def __init__(self, cumulative_volume: bool = True, max_history: int = 2000) -> None:
         self._lock = threading.Lock()
         self._cumulative_volume = cumulative_volume
+        self.max_history = max_history
 
         # (symbol, timeframe) -> current open candle
         self._open_candles: dict[tuple[str, str], Candle] = {}
@@ -107,6 +151,61 @@ class CandleBuilder:
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+
+    def seed_completed_candles(self, candles: list[Candle]) -> int:
+        """Seed the builder with completed historical candles."""
+        added = 0
+        with self._lock:
+            for c in candles:
+                key = (c.symbol, c.timeframe)
+                if key not in self._completed:
+                    self._completed[key] = deque(maxlen=self.max_history)
+                # Avoid duplicates based on start_time
+                existing_starts = {x.start_time for x in self._completed[key]}
+                if c.start_time not in existing_starts:
+                    self._completed[key].append(c)
+                    added += 1
+            # Sort deques chronologically
+            for key in self._completed:
+                sorted_list = sorted(self._completed[key], key=lambda x: x.start_time)
+                self._completed[key] = deque(sorted_list, maxlen=self.max_history)
+        return added
+
+    def save_to_disk(self, file_path: str | Path) -> None:
+        """Persist all completed candles to disk in JSON format."""
+        file_path = Path(file_path)
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        with self._lock:
+            payload = {}
+            for (sym, tf), buf in self._completed.items():
+                key = f"{sym}:{tf}"
+                payload[key] = [c.to_dict() for c in buf]
+            try:
+                temp_file = file_path.with_suffix(".tmp")
+                with open(temp_file, "w", encoding="utf-8") as f:
+                    json.dump(payload, f)
+                temp_file.replace(file_path)
+            except Exception as e:
+                log.warning("Failed to save candles to disk: %s", e)
+
+    def load_from_disk(self, file_path: str | Path) -> int:
+        """Restore completed candles from disk."""
+        file_path = Path(file_path)
+        if not file_path.exists():
+            return 0
+        loaded_count = 0
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                payload = json.load(f)
+            candles_to_seed = []
+            for key, rows in payload.items():
+                for row in rows:
+                    candles_to_seed.append(Candle.from_dict(row))
+            loaded_count = self.seed_completed_candles(candles_to_seed)
+            log.info("Loaded %d candles from %s", loaded_count, file_path)
+        except Exception as e:
+            log.warning("Failed to load candles from %s: %s", file_path, e)
+        return loaded_count
 
     def process_tick(self, tick: MarketTick) -> list[Candle]:
         """Ingest one tick and return a list of newly **completed** candles.
