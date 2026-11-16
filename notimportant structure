@@ -1,0 +1,996 @@
+Folder PATH listing
+Volume serial number is D636-EFCD
+C:\KITTING_DEPLOYMENT\FRONTEND-DASHBOARD - 21 APRIL\SRC
+|   favicon.ico
+|   index.html
+|   main.ts
+|   polyfills.ts
+|   src-structure.txt
+|   styles.scss
+|   test.ts
+|   
++---app
+|   |   app-routing.module.ts
+|   |   app.component.html
+|   |   app.component.scss
+|   |   app.component.ts
+|   |   app.module.ts
+|   |   
+|   +---admin
+|   |   \---tabs
+|   +---modules
+|   |   +---admin
+|   |   |   |   admin.module.ts
+|   |   |   |   admin.routing.module.ts
+|   |   |   |   
+|   |   |   \---tabs
+|   |   |       +---deki-master-upload
+|   |   |       |       deki-master-upload.component.html
+|   |   |       |       deki-master-upload.component.scss
+|   |   |       |       deki-master-upload.component.ts
+|   |   |       |       
+|   |   |       +---forcefullycompletedvins
+|   |   |       |       forcefullycompletedvins.component.html
+|   |   |       |       forcefullycompletedvins.component.scss
+|   |   |       |       forcefullycompletedvins.component.ts
+|   |   |       |       
+|   |   |       +---full-vc-bom-upload
+|   |   |       |       full-vc-bom-upload.component.html
+|   |   |       |       full-vc-bom-upload.component.scss
+|   |   |       |       full-vc-bom-upload.component.ts
+|   |   |       |       
+|   |   |       +---grouppartdetails
+|   |   |       |       grouppartdetails.component.html
+|   |   |       |       grouppartdetails.component.scss
+|   |   |       |       grouppartdetails.component.ts
+|   |   |       |       
+|   |   |       +---kitingpartdetailsupload
+|   |   |       |       kitingpartdetailsupload.component.html
+|   |   |       |       kitingpartdetailsupload.component.scss
+|   |   |       |       kitingpartdetailsupload.component.ts
+|   |   |       |       
+|   |   |       +---kittinghold-unhold
+|   |   |       |       kittinghold-unhold.component.html
+|   |   |       |       kittinghold-unhold.component.scss
+|   |   |       |       kittinghold-unhold.component.ts
+|   |   |       |       
+|   |   |       +---line-kitting-status
+|   |   |       |   |   confirm-dialog.component.ts
+|   |   |       |   |   line-kitting-status.component.html
+|   |   |       |   |   line-kitting-status.component.scss
+|   |   |       |   |   line-kitting-status.component.ts
+|   |   |       |   |   
+|   |   |       |   +---edit-vehicle
+|   |   |       |   |       edit-vehicle-dialog.component.html
+|   |   |       |   |       edit-vehicle-dialog.component.scss
+|   |   |       |   |       edit-vehicle-dialog.component.ts
+|   |   |       |   |       
+|   |   |       |   \---move-vin-dialog
+|   |   |       |           move-vin-dialog.component.html
+|   |   |       |           move-vin-dialog.component.scss
+|   |   |       |           move-vin-dialog.component.ts
+|   |   |       |           
+|   |   |       +---linehierachy
+|   |   |       |   +---linehierarchytableview
+|   |   |       |   |       linehierarchytableview.component.html
+|   |   |       |   |       linehierarchytableview.component.scss
+|   |   |       |   |       linehierarchytableview.component.ts
+|   |   |       |   |       
+|   |   |       |   \---linehierarchytreeview
+|   |   |       |           linehierarchytreeview.component.html
+|   |   |       |           linehierarchytreeview.component.scss
+|   |   |       |           linehierarchytreeview.component.ts
+|   |   |       |           
+|   |   |       +---livekittingstatus
+|   |   |       |       livekittingstatus.component.html
+|   |   |       |       livekittingstatus.component.scss
+|   |   |       |       livekittingstatus.component.ts
+|   |   |       |       
+|   |   |       +---mac-articleidkittingupload
+|   |   |       |       mac-articleidkittingupload.component.html
+|   |   |       |       mac-articleidkittingupload.component.scss
+|   |   |       |       mac-articleidkittingupload.component.ts
+|   |   |       |       
+|   |   |       +---trolleymac-articleidkittingupload
+|   |   |       |       trolleymac-articleidkittingupload.component.html
+|   |   |       |       trolleymac-articleidkittingupload.component.scss
+|   |   |       |       trolleymac-articleidkittingupload.component.ts
+|   |   |       |       
+|   |   |       +---vcbomupload
+|   |   |       |       vcbomupload.component.html
+|   |   |       |       vcbomupload.component.scss
+|   |   |       |       vcbomupload.component.ts
+|   |   |       |       
+|   |   |       \---vcdetailsupload
+|   |   |               vcdetailsupload.component.html
+|   |   |               vcdetailsupload.component.scss
+|   |   |               vcdetailsupload.component.ts
+|   |   |               
+|   |   +---layout
+|   |   |   |   layout-routing.module.ts
+|   |   |   |   layout.component.html
+|   |   |   |   layout.component.scss
+|   |   |   |   layout.component.ts
+|   |   |   |   layout.module.ts
+|   |   |   |   
+|   |   |   +---footer
+|   |   |   |       footer.component.html
+|   |   |   |       footer.component.scss
+|   |   |   |       footer.component.ts
+|   |   |   |       
+|   |   |   +---header
+|   |   |   |       header.component.html
+|   |   |   |       header.component.scss
+|   |   |   |       header.component.ts
+|   |   |   |       
+|   |   |   \---sidebar
+|   |   |           sidebar.component.html
+|   |   |           sidebar.component.scss
+|   |   |           sidebar.component.ts
+|   |   |           sidenav.ts
+|   |   |           
+|   |   +---main-dashboard
+|   |   |   |   main-dashboard-routing.module.ts
+|   |   |   |   main-dashboard.module.ts
+|   |   |   |   
+|   |   |   \---dashboard
+|   |   |           dashboard.component.html
+|   |   |           dashboard.component.scss
+|   |   |           dashboard.component.ts
+|   |   |           
+|   |   +---operator
+|   |   |   |   operator.component.html
+|   |   |   |   operator.component.scss
+|   |   |   |   operator.component.ts
+|   |   |   |   operator.module.ts
+|   |   |   |   operator.routing.module.ts
+|   |   |   |   
+|   |   |   +---move-vin-anywhere-dialog
+|   |   |   |       move-vin-anywhere-dialog.component.html
+|   |   |   |       move-vin-anywhere-dialog.component.scss
+|   |   |   |       move-vin-anywhere-dialog.component.ts
+|   |   |   |       
+|   |   |   +---move-vin-dialog
+|   |   |   |       move-vin-dialog.component.html
+|   |   |   |       move-vin-dialog.component.scss
+|   |   |   |       move-vin-dialog.component.ts
+|   |   |   |       
+|   |   |   \---tabs
+|   |   |       |   confirm-dialog.component.ts
+|   |   |       |   
+|   |   |       +---cpz1
+|   |   |       |       cpz1.component.html
+|   |   |       |       cpz1.component.scss
+|   |   |       |       cpz1.component.ts
+|   |   |       |       
+|   |   |       +---crz1
+|   |   |       |       crz1.component.html
+|   |   |       |       crz1.component.scss
+|   |   |       |       crz1.component.ts
+|   |   |       |       
+|   |   |       +---drz1
+|   |   |       |       drz1.component.html
+|   |   |       |       drz1.component.scss
+|   |   |       |       drz1.component.ts
+|   |   |       |       
+|   |   |       +---drz2
+|   |   |       |       drz2.component.html
+|   |   |       |       drz2.component.scss
+|   |   |       |       drz2.component.ts
+|   |   |       |       
+|   |   |       +---tr1z1
+|   |   |       |       tr1z1.component.html
+|   |   |       |       tr1z1.component.scss
+|   |   |       |       tr1z1.component.ts
+|   |   |       |       
+|   |   |       +---tr1z2
+|   |   |       |       tr1z2.component.html
+|   |   |       |       tr1z2.component.scss
+|   |   |       |       tr1z2.component.ts
+|   |   |       |       
+|   |   |       +---tr2z1
+|   |   |       |       tr2z1.component.html
+|   |   |       |       tr2z1.component.scss
+|   |   |       |       tr2z1.component.ts
+|   |   |       |       
+|   |   |       \---tr2z2
+|   |   |               tr2z2.component.html
+|   |   |               tr2z2.component.scss
+|   |   |               tr2z2.component.ts
+|   |   |               
+|   |   +---users
+|   |   |   |   users-routing.module.ts
+|   |   |   |   users.module.ts
+|   |   |   |   
+|   |   |   \---login
+|   |   |           login.component.html
+|   |   |           login.component.scss
+|   |   |           login.component.ts
+|   |   |           
+|   |   \---vehicle-configuration
+|   |       |   vehicle-configuration-routing.module.ts
+|   |       |   vehicle-configuration.module.ts
+|   |       |   
+|   |       \---user-management
+|   |               user-management.component.html
+|   |               user-management.component.scss
+|   |               user-management.component.ts
+|   |               
+|   \---shared
+|       +---components
+|       |   +---live-picking-modal
+|       |   |       live-picking-modal.component.html
+|       |   |       live-picking-modal.component.scss
+|       |   |       live-picking-modal.component.ts
+|       |   |       
+|       |   \---share-modal
+|       |           share-modal.component.html
+|       |           share-modal.component.scss
+|       |           share-modal.component.ts
+|       |           
+|       +---constants
+|       |       Global.ts
+|       |       
+|       +---guards
+|       |       auth.guard.ts
+|       |       
+|       \---services
+|               auth.interceptor.ts
+|               auth.service.ts
+|               toastr-msg.service.ts
+|               
++---assets
+|   +---img
+|   |   |   bg-img.png
+|   |   |   bg-img1.png
+|   |   |   no-data-img.svg
+|   |   |   Tata-motors-header-logo.svg
+|   |   |   Tata_motor_logo.svg
+|   |   |   Tiago_Tigor_img.png
+|   |   |   
+|   |   \---icons
+|   |           chevron-down-icon.svg
+|   |           deki-master-upload.png
+|   |           eye-icon.svg
+|   |           forcefully-completed-vin-icon.png
+|   |           group-part.png
+|   |           hierarchy-icon.svg
+|   |           kitting-hold-unhold.png
+|   |           kitting-part-icon.svg
+|   |           line-kitting-icon.svg
+|   |           live-kitting-icon.png
+|   |           lock-icon.svg
+|   |           mac-articleid-icon.png
+|   |           search-icon.svg
+|   |           signout-icon.svg
+|   |           stand-bar-icon.svg
+|   |           sub-menu-icon.svg
+|   |           table-view.png
+|   |           toggle-bar-icon.svg
+|   |           tree-view.png
+|   |           trolley-icon.svg
+|   |           trolley-scan-icon.svg
+|   |           user-icon.svg
+|   |           user-profile-icon.svg
+|   |           vc-add-icon.svg
+|   |           vc-bom-icon.svg
+|   |           vc-details-icon.svg
+|   |           
+|   \---video
+|           tiago_tigor_cinematic.mp4
+|           
+\---environments
+        environment.dev.ts
+        environment.prod.ts
+        environment.ts
+        
+Folder PATH listing for volume New Volume
+Volume serial number is FA09-0764
+D:.
+|   favicon.ico
+|   index.html
+|   main.ts
+|   polyfills.ts
+|   src-structure.txt
+|   styles.scss
+|   test.ts
+|   
++---app
+|   |   app-routing.module.ts
+|   |   app.component.html
+|   |   app.component.scss
+|   |   app.component.ts
+|   |   app.module.ts
+|   |   
+|   +---modules
+|   |   +---admin
+|   |   |   |   admin.module.ts
+|   |   |   |   admin.routing.module.ts
+|   |   |   |   
+|   |   |   \---tabs
+|   |   |       +---forcefullycompletedvins
+|   |   |       |       forcefullycompletedvins.component.html
+|   |   |       |       forcefullycompletedvins.component.scss
+|   |   |       |       forcefullycompletedvins.component.ts
+|   |   |       |       
+|   |   |       +---grouppartdetails
+|   |   |       |       grouppartdetails.component.html
+|   |   |       |       grouppartdetails.component.scss
+|   |   |       |       grouppartdetails.component.ts
+|   |   |       |       
+|   |   |       +---kitingpartdetailsupload
+|   |   |       |       kitingpartdetailsupload.component.html
+|   |   |       |       kitingpartdetailsupload.component.scss
+|   |   |       |       kitingpartdetailsupload.component.ts
+|   |   |       |       
+|   |   |       +---kittinghold-unhold
+|   |   |       |       kittinghold-unhold.component.html
+|   |   |       |       kittinghold-unhold.component.scss
+|   |   |       |       kittinghold-unhold.component.ts
+|   |   |       |       
+|   |   |       +---line-kitting-status
+|   |   |       |   |   confirm-dialog.component.ts
+|   |   |       |   |   line-kitting-status.component.html
+|   |   |       |   |   line-kitting-status.component.scss
+|   |   |       |   |   line-kitting-status.component.ts
+|   |   |       |   |   
+|   |   |       |   \---move-vin-dialog
+|   |   |       |           move-vin-dialog.component.html
+|   |   |       |           move-vin-dialog.component.scss
+|   |   |       |           move-vin-dialog.component.ts
+|   |   |       |           
+|   |   |       +---linehierachy
+|   |   |       |   +---linehierarchytableview
+|   |   |       |   |       linehierarchytableview.component.html
+|   |   |       |   |       linehierarchytableview.component.scss
+|   |   |       |   |       linehierarchytableview.component.ts
+|   |   |       |   |       
+|   |   |       |   \---linehierarchytreeview
+|   |   |       |           linehierarchytreeview.component.html
+|   |   |       |           linehierarchytreeview.component.scss
+|   |   |       |           linehierarchytreeview.component.ts
+|   |   |       |           
+|   |   |       +---livekittingstatus
+|   |   |       |       livekittingstatus.component.html
+|   |   |       |       livekittingstatus.component.scss
+|   |   |       |       livekittingstatus.component.ts
+|   |   |       |       
+|   |   |       +---mac-articleidkittingupload
+|   |   |       |       mac-articleidkittingupload.component.html
+|   |   |       |       mac-articleidkittingupload.component.scss
+|   |   |       |       mac-articleidkittingupload.component.ts
+|   |   |       |       
+|   |   |       +---trolleymac-articleidkittingupload
+|   |   |       |       trolleymac-articleidkittingupload.component.html
+|   |   |       |       trolleymac-articleidkittingupload.component.scss
+|   |   |       |       trolleymac-articleidkittingupload.component.ts
+|   |   |       |       
+|   |   |       +---vcbomupload
+|   |   |       |       vcbomupload.component.html
+|   |   |       |       vcbomupload.component.scss
+|   |   |       |       vcbomupload.component.ts
+|   |   |       |       
+|   |   |       \---vcdetailsupload
+|   |   |               vcdetailsupload.component.html
+|   |   |               vcdetailsupload.component.scss
+|   |   |               vcdetailsupload.component.ts
+|   |   |               
+|   |   +---layout
+|   |   |   |   layout-routing.module.ts
+|   |   |   |   layout.component.html
+|   |   |   |   layout.component.scss
+|   |   |   |   layout.component.ts
+|   |   |   |   layout.module.ts
+|   |   |   |   
+|   |   |   +---footer
+|   |   |   |       footer.component.html
+|   |   |   |       footer.component.scss
+|   |   |   |       footer.component.ts
+|   |   |   |       
+|   |   |   +---header
+|   |   |   |       header.component.html
+|   |   |   |       header.component.scss
+|   |   |   |       header.component.ts
+|   |   |   |       
+|   |   |   \---sidebar
+|   |   |           sidebar.component.html
+|   |   |           sidebar.component.scss
+|   |   |           sidebar.component.ts
+|   |   |           sidenav.ts
+|   |   |           
+|   |   +---main-dashboard
+|   |   |   |   main-dashboard-routing.module.ts
+|   |   |   |   main-dashboard.module.ts
+|   |   |   |   
+|   |   |   \---dashboard
+|   |   |           dashboard.component.html
+|   |   |           dashboard.component.scss
+|   |   |           dashboard.component.ts
+|   |   |           
+|   |   +---operator
+|   |   |   |   operator.component.html
+|   |   |   |   operator.component.scss
+|   |   |   |   operator.component.ts
+|   |   |   |   operator.module.ts
+|   |   |   |   operator.routing.module.ts
+|   |   |   |   
+|   |   |   +---move-vin-anywhere-dialog
+|   |   |   |       move-vin-anywhere-dialog.component.html
+|   |   |   |       move-vin-anywhere-dialog.component.scss
+|   |   |   |       move-vin-anywhere-dialog.component.ts
+|   |   |   |       
+|   |   |   +---move-vin-dialog
+|   |   |   |       move-vin-dialog.component.html
+|   |   |   |       move-vin-dialog.component.scss
+|   |   |   |       move-vin-dialog.component.ts
+|   |   |   |       
+|   |   |   \---tabs
+|   |   |       |   confirm-dialog.component.ts
+|   |   |       |   
+|   |   |       +---cpz1
+|   |   |       |       cpz1.component.html
+|   |   |       |       cpz1.component.scss
+|   |   |       |       cpz1.component.ts
+|   |   |       |       
+|   |   |       +---crz1
+|   |   |       |       crz1.component.html
+|   |   |       |       crz1.component.scss
+|   |   |       |       crz1.component.ts
+|   |   |       |       
+|   |   |       +---drz1
+|   |   |       |       drz1.component.html
+|   |   |       |       drz1.component.scss
+|   |   |       |       drz1.component.ts
+|   |   |       |       
+|   |   |       +---drz2
+|   |   |       |       drz2.component.html
+|   |   |       |       drz2.component.scss
+|   |   |       |       drz2.component.ts
+|   |   |       |       
+|   |   |       +---tr1z1
+|   |   |       |       tr1z1.component.html
+|   |   |       |       tr1z1.component.scss
+|   |   |       |       tr1z1.component.ts
+|   |   |       |       
+|   |   |       +---tr1z2
+|   |   |       |       tr1z2.component.html
+|   |   |       |       tr1z2.component.scss
+|   |   |       |       tr1z2.component.ts
+|   |   |       |       
+|   |   |       +---tr2z1
+|   |   |       |       tr2z1.component.html
+|   |   |       |       tr2z1.component.scss
+|   |   |       |       tr2z1.component.ts
+|   |   |       |       
+|   |   |       \---tr2z2
+|   |   |               tr2z2.component.html
+|   |   |               tr2z2.component.scss
+|   |   |               tr2z2.component.ts
+|   |   |               
+|   |   +---users
+|   |   |   |   users-routing.module.ts
+|   |   |   |   users.module.ts
+|   |   |   |   
+|   |   |   \---login
+|   |   |           login.component.html
+|   |   |           login.component.scss
+|   |   |           login.component.ts
+|   |   |           
+|   |   \---vehicle-configuration
+|   |       |   vehicle-configuration-routing.module.ts
+|   |       |   vehicle-configuration.module.ts
+|   |       |   
+|   |       \---user-management
+|   |               user-management.component.html
+|   |               user-management.component.scss
+|   |               user-management.component.ts
+|   |               
+|   \---shared
+|       +---components
+|       |   +---live-picking-modal
+|       |   |       live-picking-modal.component.html
+|       |   |       live-picking-modal.component.scss
+|       |   |       live-picking-modal.component.ts
+|       |   |       
+|       |   \---share-modal
+|       |           share-modal.component.html
+|       |           share-modal.component.scss
+|       |           share-modal.component.ts
+|       |           
+|       +---constants
+|       |       Global.ts
+|       |       
+|       +---guards
+|       |       auth.guard.ts
+|       |       
+|       \---services
+|               auth.interceptor.ts
+|               auth.service.ts
+|               toastr-msg.service.ts
+|               
++---assets
+|   \---img
+|       |   bg-img.png
+|       |   bg-img1.png
+|       |   no-data-img.svg
+|       |   Tata-motors-header-logo.svg
+|       |   Tata_motor_logo.svg
+|       |   Tiago_Tigor_img.png
+|       |   
+|       \---icons
+|               chevron-down-icon.svg
+|               eye-icon.svg
+|               forcefully-completed-vin-icon.png
+|               group-part.png
+|               hierarchy-icon.svg
+|               kitting-hold-unhold.png
+|               kitting-part-icon.svg
+|               line-kitting-icon.svg
+|               live-kitting-icon.png
+|               lock-icon.svg
+|               mac-articleid-icon.png
+|               search-icon.svg
+|               signout-icon.svg
+|               stand-bar-icon.svg
+|               sub-menu-icon.svg
+|               table-view.png
+|               toggle-bar-icon.svg
+|               tree-view.png
+|               trolley-icon.svg
+|               trolley-scan-icon.svg
+|               user-icon.svg
+|               user-profile-icon.svg
+|               vc-add-icon.svg
+|               vc-bom-icon.svg
+|               vc-details-icon.svg
+|               
+\---environments
+        environment.dev.ts
+        environment.prod.ts
+        environment.ts
+        
+Folder PATH listing
+Volume serial number is D636-EFCD
+C:.
+|   .gitignore
+|   angular-structure.txt
+|   mvnw
+|   mvnw.cmd
+|   pom.xml
+|   
++---.idea
+|   |   .gitignore
+|   |   compiler.xml
+|   |   encodings.xml
+|   |   jarRepositories.xml
+|   |   misc.xml
+|   |   vcs.xml
+|   |   workspace.xml
+|   |   
+|   \---dictionaries
+|           project.xml
+|           
++---logs
+|   +---2026-03-12
+|   |       Kitting.log
+|   |       
+|   +---2026-03-24
+|   |       Kitting.log
+|   |       
+|   +---2026-03-26
+|   |       Kitting.log
+|   |       
+|   +---2026-03-27
+|   |       Kitting.log
+|   |       
+|   +---2026-03-28
+|   |       Kitting.log
+|   |       
+|   +---2026-03-29
+|   |       Kitting.log
+|   |       
+|   +---2026-03-30
+|   |       Kitting.log
+|   |       
+|   +---2026-04-01
+|   |       Kitting.log
+|   |       
+|   +---2026-04-07
+|   |       Kitting.log
+|   |       
+|   +---2026-04-08
+|   |       Kitting.log
+|   |       
+|   +---2026-04-09
+|   |       Kitting.log
+|   |       
+|   +---2026-04-10
+|   |       Kitting.log
+|   |       
+|   +---2026-04-11
+|   |       Kitting.log
+|   |       
+|   +---2026-04-12
+|   |       Kitting.log
+|   |       
+|   +---2026-04-13
+|   |       Kitting.log
+|   |       
+|   +---2026-04-14
+|   |       Kitting.log
+|   |       
+|   +---2026-04-18
+|   |       Kitting.log
+|   |       
+|   +---2026-04-20
+|   |       Kitting.log
+|   |       
+|   +---2026-04-21
+|   |       Kitting.log
+|   |       
+|   +---2026-04-22
+|   |       Kitting.log
+|   |       
+|   \---2026-04-23
+|           Kitting.log
+|           
++---src
+|   +---main
+|   |   +---java
+|   |   |   \---com
+|   |   |       \---kitting
+|   |   |           |   KittingApplication.java
+|   |   |           |   
+|   |   |           +---appender
+|   |   |           |       DailyFolderRollingAppender.java
+|   |   |           |       
+|   |   |           +---config
+|   |   |           |       AppConfig.java
+|   |   |           |       DataSourceConfig.java
+|   |   |           |       RestTemplateConfig.java
+|   |   |           |       SecurityConfig.java
+|   |   |           |       
+|   |   |           +---controller
+|   |   |           |       AuthController.java
+|   |   |           |       ForceKittingAuditController.java
+|   |   |           |       ForceKittingController.java
+|   |   |           |       GroupPartController.java
+|   |   |           |       Home.java
+|   |   |           |       KittingLiveStatusController.java
+|   |   |           |       KittingMoveVinController.java
+|   |   |           |       LineHierarchyController.java
+|   |   |           |       LineKittingStatusController.java
+|   |   |           |       MacKittingController.java
+|   |   |           |       MacKittingViewController.java
+|   |   |           |       PartMasterController.java
+|   |   |           |       PartMasterToggleController.java
+|   |   |           |       PartMasterViewController.java
+|   |   |           |       TrolleyDsnAllotmentController.java
+|   |   |           |       TrolleyMacMappingController.java
+|   |   |           |       TrolleyMacMappingViewController.java
+|   |   |           |       VcBomController.java
+|   |   |           |       VcDetailsController.java
+|   |   |           |       VCViewController.java
+|   |   |           |       VinHoldToggleController.java
+|   |   |           |       VinHoldViewController.java
+|   |   |           |       VinUnholdAndMoveController.java
+|   |   |           |       
+|   |   |           +---dto
+|   |   |           |       ApiResponse.java
+|   |   |           |       LoginRequest.java
+|   |   |           |       MacKittingUploadResult.java
+|   |   |           |       MacKittingUploadSummary.java
+|   |   |           |       MoveVinRequest.java
+|   |   |           |       P2LDrillDownDto.java
+|   |   |           |       PasswordUpdateRequest.java
+|   |   |           |       UploadResult.java
+|   |   |           |       UserStatusRequest.java
+|   |   |           |       UserTabRequest.java
+|   |   |           |       VcBomViewDto.java
+|   |   |           |       VcP2lMappingDto.java
+|   |   |           |       
+|   |   |           +---entity
+|   |   |           |       GroupPart.java
+|   |   |           |       LineAllowedAreas.java
+|   |   |           |       LineAllowedHierarchy.java
+|   |   |           |       MacArticle.java
+|   |   |           |       PartMaster.java
+|   |   |           |       TrolleyMacMapping.java
+|   |   |           |       User.java
+|   |   |           |       VcBomMap.java
+|   |   |           |       VCDetails.java
+|   |   |           |       VehicleData.java
+|   |   |           |       
+|   |   |           +---exception
+|   |   |           |       BadRequestException.java
+|   |   |           |       DatabaseAccessException.java
+|   |   |           |       GlobalExceptionHandler.java
+|   |   |           |       UnauthorizedException.java
+|   |   |           |       
+|   |   |           +---integration
+|   |   |           |       ExternalArticlePublisher.java
+|   |   |           |       ExternalEslLedPublisher.java
+|   |   |           |       ExternalEslStatusPublisher.java
+|   |   |           |       ExternalLedPublisher.java
+|   |   |           |       ExternalPickToLightPublisher.java
+|   |   |           |       ExternalQuantityPublisher.java
+|   |   |           |       PickToLightSseListener.java
+|   |   |           |       
+|   |   |           +---model
+|   |   |           |       JwtRequest.java
+|   |   |           |       JwtResponse.java
+|   |   |           |       
+|   |   |           +---persistence
+|   |   |           |       SseEventLogService.java
+|   |   |           |       SseEventWriter.java
+|   |   |           |       
+|   |   |           +---queue
+|   |   |           |       MacPickQueueService.java
+|   |   |           |       MacPickSseHandler.java
+|   |   |           |       
+|   |   |           +---repositories
+|   |   |           |       GroupPartRepository.java
+|   |   |           |       LineAllowedAreasRepository.java
+|   |   |           |       LineAllowedHierarchyRepository.java
+|   |   |           |       MacArticleRepository.java
+|   |   |           |       PartMasterRepository.java
+|   |   |           |       UserRepository.java
+|   |   |           |       VcBomMapRepository.java
+|   |   |           |       VCDetailsRepository.java
+|   |   |           |       VehicleDataRepository.java
+|   |   |           |       
+|   |   |           +---scheduler
+|   |   |           |       VehicleDataScheduler.java
+|   |   |           |       
+|   |   |           +---security
+|   |   |           |       JwtAuthenticationEntryPoint.java
+|   |   |           |       JwtAuthenticationFilter.java
+|   |   |           |       JwtHelper.java
+|   |   |           |       
+|   |   |           +---service
+|   |   |           |   |   CustomUserDetailService.java
+|   |   |           |   |   DoorTrolleyContinuityService.java
+|   |   |           |   |   ForceKittingAuditService.java
+|   |   |           |   |   ForceKittingP2LCompletionService.java
+|   |   |           |   |   ForceKittingService.java
+|   |   |           |   |   GroupPartService.java
+|   |   |           |   |   KittingCompletionService.java
+|   |   |           |   |   KittingLiveStatusService.java
+|   |   |           |   |   KittingMoveVinService.java
+|   |   |           |   |   LineHierarchyService.java
+|   |   |           |   |   LineKittingStatusService.java
+|   |   |           |   |   MacKittingService.java
+|   |   |           |   |   P2LAsyncWorker.java
+|   |   |           |   |   PartMasterUploadService.java
+|   |   |           |   |   PickToLightPickService.java
+|   |   |           |   |   QuantityClaimService.java
+|   |   |           |   |   QuantityRetryScheduler.java
+|   |   |           |   |   QuantityUpdateService.java
+|   |   |           |   |   Trim2TrolleyContinuityService.java
+|   |   |           |   |   TrolleyDsnAllotmentService.java
+|   |   |           |   |   TrolleyMacMappingService.java
+|   |   |           |   |   TrolleyMacMappingViewService.java
+|   |   |           |   |   UserService.java
+|   |   |           |   |   VcBomProcessingService.java
+|   |   |           |   |   VCDetailsService.java
+|   |   |           |   |   VehicleDataService.java
+|   |   |           |   |   VinHoldToggleService.java
+|   |   |           |   |   VinHoldViewService.java
+|   |   |           |   |   VinUnholdAndMoveService.java
+|   |   |           |   |   
+|   |   |           |   \---helper
+|   |   |           |           ForceKittingP2LHandler.java
+|   |   |           |           
+|   |   |           \---util
+|   |   |                   JsonUtil.java
+|   |   |                   
+|   |   \---resources
+|   |       |   application-dev.properties
+|   |       |   application-prod.properties
+|   |       |   application.properties
+|   |       |   log4j.xml
+|   |       |   
+|   |       \---META-INF
+|   |               MANIFEST.MF
+|   |               
+|   \---test
+|       \---java
+|           \---com
+|               \---kitting
+\---target
+    |   kitting-0.0.0.jar
+    |   kitting-0.0.0.jar.original
+    |   
+    +---classes
+    |   |   application-dev.properties
+    |   |   application-prod.properties
+    |   |   application.properties
+    |   |   log4j.xml
+    |   |   
+    |   +---com
+    |   |   \---kitting
+    |   |       |   KittingApplication.class
+    |   |       |   
+    |   |       +---appender
+    |   |       |       DailyFolderRollingAppender.class
+    |   |       |       
+    |   |       +---config
+    |   |       |       AppConfig.class
+    |   |       |       DataSourceConfig.class
+    |   |       |       RestTemplateConfig.class
+    |   |       |       SecurityConfig.class
+    |   |       |       
+    |   |       +---controller
+    |   |       |       AuthController.class
+    |   |       |       ForceKittingAuditController.class
+    |   |       |       ForceKittingController.class
+    |   |       |       GroupPartController.class
+    |   |       |       Home.class
+    |   |       |       KittingLiveStatusController.class
+    |   |       |       KittingMoveVinController.class
+    |   |       |       LineHierarchyController.class
+    |   |       |       LineKittingStatusController.class
+    |   |       |       MacKittingController.class
+    |   |       |       MacKittingViewController.class
+    |   |       |       PartMasterController.class
+    |   |       |       PartMasterToggleController.class
+    |   |       |       PartMasterViewController.class
+    |   |       |       TrolleyDsnAllotmentController.class
+    |   |       |       TrolleyMacMappingController.class
+    |   |       |       TrolleyMacMappingViewController.class
+    |   |       |       VcBomController.class
+    |   |       |       VcDetailsController.class
+    |   |       |       VCViewController.class
+    |   |       |       VinHoldToggleController.class
+    |   |       |       VinHoldViewController.class
+    |   |       |       VinUnholdAndMoveController.class
+    |   |       |       
+    |   |       +---dto
+    |   |       |       ApiResponse.class
+    |   |       |       LoginRequest.class
+    |   |       |       LoginResponse.class
+    |   |       |       MacKittingUploadResult.class
+    |   |       |       MacKittingUploadSummary.class
+    |   |       |       MoveVinRequest.class
+    |   |       |       P2LDrillDownDto.class
+    |   |       |       PasswordUpdateRequest.class
+    |   |       |       UploadResult.class
+    |   |       |       UserStatusRequest.class
+    |   |       |       UserTabRequest.class
+    |   |       |       VcBomViewDto.class
+    |   |       |       VcP2lMappingDto.class
+    |   |       |       
+    |   |       +---entity
+    |   |       |       GroupPart.class
+    |   |       |       LineAllowedAreas.class
+    |   |       |       LineAllowedHierarchy.class
+    |   |       |       MacArticle.class
+    |   |       |       PartMaster.class
+    |   |       |       TrolleyMacMapping.class
+    |   |       |       User.class
+    |   |       |       VcBomMap.class
+    |   |       |       VCDetails.class
+    |   |       |       VehicleData.class
+    |   |       |       
+    |   |       +---exception
+    |   |       |       BadRequestException.class
+    |   |       |       DatabaseAccessException.class
+    |   |       |       GlobalExceptionHandler.class
+    |   |       |       UnauthorizedException.class
+    |   |       |       
+    |   |       +---integration
+    |   |       |       ExternalArticlePublisher.class
+    |   |       |       ExternalEslLedPublisher.class
+    |   |       |       ExternalEslStatusPublisher.class
+    |   |       |       ExternalLedPublisher.class
+    |   |       |       ExternalPickToLightPublisher.class
+    |   |       |       ExternalQuantityPublisher.class
+    |   |       |       PickToLightSseListener.class
+    |   |       |       
+    |   |       +---model
+    |   |       |       JwtRequest.class
+    |   |       |       JwtResponse$Builder.class
+    |   |       |       JwtResponse$JwtResponseBuilder.class
+    |   |       |       JwtResponse.class
+    |   |       |       
+    |   |       +---persistence
+    |   |       |       SseEventLogService.class
+    |   |       |       SseEventWriter.class
+    |   |       |       
+    |   |       +---queue
+    |   |       |       MacPickQueueService$PendingRow.class
+    |   |       |       MacPickQueueService.class
+    |   |       |       MacPickSseHandler.class
+    |   |       |       
+    |   |       +---repositories
+    |   |       |       GroupPartRepository.class
+    |   |       |       LineAllowedAreasRepository.class
+    |   |       |       LineAllowedHierarchyRepository.class
+    |   |       |       MacArticleRepository.class
+    |   |       |       PartMasterRepository.class
+    |   |       |       UserRepository.class
+    |   |       |       VcBomMapRepository.class
+    |   |       |       VCDetailsRepository.class
+    |   |       |       VehicleDataRepository.class
+    |   |       |       
+    |   |       +---scheduler
+    |   |       |       VehicleDataScheduler.class
+    |   |       |       
+    |   |       +---security
+    |   |       |       JwtAuthenticationEntryPoint.class
+    |   |       |       JwtAuthenticationFilter.class
+    |   |       |       JwtHelper.class
+    |   |       |       
+    |   |       +---service
+    |   |       |   |   CustomUserDetailService.class
+    |   |       |   |   DoorTrolleyContinuityService.class
+    |   |       |   |   ForceKittingAuditService.class
+    |   |       |   |   ForceKittingP2LCompletionService.class
+    |   |       |   |   ForceKittingService.class
+    |   |       |   |   GroupPartService.class
+    |   |       |   |   KittingCompletionService.class
+    |   |       |   |   KittingLiveStatusService.class
+    |   |       |   |   KittingMoveVinService.class
+    |   |       |   |   LineHierarchyService.class
+    |   |       |   |   LineKittingStatusService.class
+    |   |       |   |   MacKittingService.class
+    |   |       |   |   P2LAsyncWorker$BlinkTask.class
+    |   |       |   |   P2LAsyncWorker.class
+    |   |       |   |   PartMasterUploadService.class
+    |   |       |   |   PickToLightPickService.class
+    |   |       |   |   QuantityClaimService$CandidateRow.class
+    |   |       |   |   QuantityClaimService.class
+    |   |       |   |   QuantityRetryScheduler$RetryRow.class
+    |   |       |   |   QuantityRetryScheduler.class
+    |   |       |   |   QuantityUpdateService.class
+    |   |       |   |   Trim2TrolleyContinuityService.class
+    |   |       |   |   TrolleyDsnAllotmentService$1.class
+    |   |       |   |   TrolleyDsnAllotmentService$ActiveAssignment.class
+    |   |       |   |   TrolleyDsnAllotmentService$DecodedTrolley.class
+    |   |       |   |   TrolleyDsnAllotmentService$LineMeta.class
+    |   |       |   |   TrolleyDsnAllotmentService$VcMeta.class
+    |   |       |   |   TrolleyDsnAllotmentService$Vehicle.class
+    |   |       |   |   TrolleyDsnAllotmentService.class
+    |   |       |   |   TrolleyMacMappingService$1.class
+    |   |       |   |   TrolleyMacMappingService.class
+    |   |       |   |   TrolleyMacMappingViewService.class
+    |   |       |   |   UserService.class
+    |   |       |   |   VcBomProcessingService$1RowDto.class
+    |   |       |   |   VcBomProcessingService$2RowDto.class
+    |   |       |   |   VcBomProcessingService$ProcessingResult.class
+    |   |       |   |   VcBomProcessingService.class
+    |   |       |   |   VCDetailsService.class
+    |   |       |   |   VehicleDataService.class
+    |   |       |   |   VinHoldToggleService.class
+    |   |       |   |   VinHoldViewService.class
+    |   |       |   |   VinUnholdAndMoveService.class
+    |   |       |   |   
+    |   |       |   \---helper
+    |   |       |           ForceKittingP2LHandler.class
+    |   |       |           
+    |   |       \---util
+    |   |               JsonUtil.class
+    |   |               
+    |   \---META-INF
+    |           MANIFEST.MF
+    |           
+    +---generated-sources
+    |   \---annotations
+    +---generated-test-sources
+    |   \---test-annotations
+    +---maven-archiver
+    |       pom.properties
+    |       
+    +---maven-status
+    |   \---maven-compiler-plugin
+    |       +---compile
+    |       |   \---default-compile
+    |       |           createdFiles.lst
+    |       |           inputFiles.lst
+    |       |           
+    |       \---testCompile
+    |           \---default-testCompile
+    |                   createdFiles.lst
+    |                   inputFiles.lst
+    |                   
+    \---test-classes
